@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Corpus Concordance</title>
+  <meta charset="UTF-8" />
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#a22">
+</head>
+<body>
+  <h1>Corpus Concordance Viewer</h1>
+
+  <label>Search term:
+    <input type="text" id="query" placeholder="e.g. Norge">
+  </label>
+
+  <button onclick="run()">Search</button>
+
+  <div id="results"></div>
+
+  <script>
+    let dhlabids = [];
+
+    fetch('corpus.json')
+      .then(res => res.json())
+      .then(data => {
+        dhlabids = data.dhlabids;
+      });
+
+    async function run() {
+      const query = document.getElementById("query").value;
+
+      const concBody = {
+        dhlabids: dhlabids.slice(0, 20000),
+        query: query,
+        limit: 1000,
+        window: 20,
+        html_formatting: true
+      };
+
+      const concResp = await fetch("https://api.nb.no/dhlab/conc", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(concBody)
+      });
+
+      const conc = await concResp.json();
+
+      const resultsDiv = document.getElementById("results");
+      resultsDiv.innerHTML = "<h2>Concordances</h2>";
+
+      Object.values(conc.conc).forEach(text => {
+        const div = document.createElement("div");
+        div.className = "concordance";
+        div.innerHTML = text;
+        resultsDiv.appendChild(div);
+      });
+    }
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js');
+    }
+  </script>
+</body>
+</html>
