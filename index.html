@@ -1,61 +1,166 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Corpus Concordance</title>
+  <title>Corpus Concordance - Diagnostic</title>
   <meta charset="UTF-8" />
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#a22">
+  <link rel="icon" href="data:,">
+  <style>
+    pre {
+      background-color: #f5f5f5;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      max-height: 300px;
+      overflow: auto;
+    }
+    .error {
+      color: red;
+      font-weight: bold;
+    }
+    #debug {
+      margin-top: 20px;
+      padding: 10px;
+      background-color: #ffffcc;
+      border: 1px solid #e6e6e6;
+    }
+  </style>
 </head>
 <body>
-  <h1>Corpus Concordance Viewer</h1>
+  <h1>Corpus Concordance Viewer - Diagnostic</h1>
+  
+  <div id="debug">
+    <h3>Debug Information</h3>
+    <button id="checkJson">Check JSON Structure</button>
+    <div id="jsonInfo"></div>
+  </div>
+
+  <hr>
+  
   <label>Search term:
     <input type="text" id="query" placeholder="e.g. Norge">
   </label>
-  <button id="searchBtn" disabled>Search</button>
-  <div id="loading">Loading corpus data...</div>
+  <button id="searchBtn">Search</button>
   <div id="results"></div>
+  
   <script>
-    let dhlabids = [];
+    const jsonInfoDiv = document.getElementById("jsonInfo");
+    const checkJsonBtn = document.getElementById("checkJson");
     const searchBtn = document.getElementById("searchBtn");
-    const loadingDiv = document.getElementById("loading");
+    const resultsDiv = document.getElementById("results");
     
-    // Load the corpus data when the page loads
-    fetch('corpus.json')
-      .then(res => res.json())
-      .then(data => {
-        dhlabids = data.dhlabids;
-        // Enable the search button once data is loaded
-        searchBtn.disabled = false;
-        loadingDiv.style.display = "none";
-      })
-      .catch(err => {
-        loadingDiv.textContent = "Error loading corpus data: " + err.message;
-        console.error("Failed to load corpus data:", err);
-      });
-    
-    // Add event listener instead of inline onclick
-    searchBtn.addEventListener("click", run);
-    
-    async function run() {
-      const query = document.getElementById("query").value;
-      
-      if (!dhlabids || dhlabids.length === 0) {
-        alert("Corpus data not loaded yet. Please try again.");
-        return;
+    // Debug function to inspect the JSON file
+    checkJsonBtn.addEventListener("click", async function() {
+      try {
+        jsonInfoDiv.innerHTML = "<p>Loading corpus.json...</p>";
+        
+        // Fetch the raw text first to see exactly what's in the file
+        const rawResponse = await fetch('corpus.json');
+        const rawText = await rawResponse.text();
+        
+        jsonInfoDiv.innerHTML = `
+          <h4>Raw JSON file content (first 500 chars):</h4>
+          <pre>${escapeHtml(rawText.substring(0, 500))}...</pre>
+          <p>Total length: ${rawText.length} characters</p>
+        `;
+        
+        // Now try to parse it
+        jsonInfoDiv.innerHTML += "<p>Attempting to parse as JSON...</p>";
+        
+        try {
+          const jsonData = JSON.parse(rawText);
+          
+          // Check the structure
+          const structure = analyzeStructure(jsonData);
+          
+          jsonInfoDiv.innerHTML += `
+            <p>✅ Successfully parsed JSON</p>
+            <h4>Structure Analysis:</h4>
+            <pre>${escapeHtml(structure)}</pre>
+          `;
+          
+          // Test if dhlabids is present and is an array
+          if (jsonData.dhlabids) {
+            const isDhlabidsArray = Array.isArray(jsonData.dhlabids);
+            
+            if (isDhlabidsArray) {
+              jsonInfoDiv.innerHTML += `
+                <p>✅ dhlabids is a proper array with ${jsonData.dhlabids.length} elements</p>
+                <p>First 5 elements: ${jsonData.dhlabids.slice(0, 5).join(', ')}</p>
+              `;
+            } else {
+              jsonInfoDiv.innerHTML += `
+                <p class="error">❌ dhlabids is NOT an array, it's a ${typeof jsonData.dhlabids}</p>
+                <p>Structure of dhlabids:</p>
+                <pre>${escapeHtml(JSON.stringify(jsonData.dhlabids, null, 2).substring(0, 200))}...</pre>
+              `;
+            }
+          } else {
+            jsonInfoDiv.innerHTML += `
+              <p class="error">❌ No 'dhlabids' property found in the JSON</p>
+              <p>Available keys: ${Object.keys(jsonData).join(', ')}</p>
+            `;
+          }
+        } catch (parseError) {
+          jsonInfoDiv.innerHTML += `
+            <p class="error">❌ Failed to parse JSON: ${parseError.message}</p>
+            <p>This indicates your JSON file may be invalid. Check for syntax errors.</p>
+          `;
+        }
+        
+      } catch (fetchError) {
+        jsonInfoDiv.innerHTML = `
+          <p class="error">❌ Failed to load corpus.json: ${fetchError.message}</p>
+          <p>Make sure the file exists in the correct location.</p>
+        `;
       }
-      
-      // Show loading state
-      const resultsDiv = document.getElementById("results");
-      resultsDiv.innerHTML = "<p>Searching...</p>";
+    });
+    
+    // Actual search functionality with diagnostic info
+    searchBtn.addEventListener("click", async function() {
+      resultsDiv.innerHTML = "<p>Starting search process...</p>";
       
       try {
+        resultsDiv.innerHTML += "<p>Loading corpus.json...</p>";
+        
+        const response = await fetch('corpus.json');
+        const data = await response.json();
+        
+        resultsDiv.innerHTML += "<p>JSON loaded successfully</p>";
+        
+        // Check if dhlabids exists and what type it is
+        if (!data.dhlabids) {
+          resultsDiv.innerHTML += `<p class="error">No 'dhlabids' property found in the JSON.</p>`;
+          return;
+        }
+        
+        resultsDiv.innerHTML += `<p>dhlabids type: ${typeof data.dhlabids}, isArray: ${Array.isArray(data.dhlabids)}</p>`;
+        
+        // If it's not an array, try to convert it
+        let dhlabidsToUse;
+        if (!Array.isArray(data.dhlabids)) {
+          resultsDiv.innerHTML += `<p>Converting dhlabids to array using Object.values()...</p>`;
+          dhlabidsToUse = Object.values(data.dhlabids);
+          resultsDiv.innerHTML += `<p>Converted result type: ${typeof dhlabidsToUse}, isArray: ${Array.isArray(dhlabidsToUse)}</p>`;
+        } else {
+          dhlabidsToUse = data.dhlabids;
+        }
+        
+        // Now perform the search
+        const query = document.getElementById("query").value;
+        
+        resultsDiv.innerHTML += `<p>Preparing request with ${dhlabidsToUse.length} items...</p>`;
+        
         const concBody = {
-          dhlabids: dhlabids.slice(0, 20000),
+          dhlabids: dhlabidsToUse.slice(0, 20000),
           query: query,
           limit: 1000,
           window: 20,
           html_formatting: true
         };
+        
+        resultsDiv.innerHTML += "<p>Sending request to API...</p>";
         
         const concResp = await fetch("https://api.nb.no/dhlab/conc", {
           method: "POST",
@@ -67,8 +172,11 @@
           throw new Error(`HTTP error ${concResp.status}`);
         }
         
+        resultsDiv.innerHTML += "<p>Received response from API!</p>";
+        
         const conc = await concResp.json();
         
+        // Display results
         resultsDiv.innerHTML = "<h2>Concordances</h2>";
         
         if (!conc.conc || Object.keys(conc.conc).length === 0) {
@@ -82,14 +190,53 @@
           div.innerHTML = text;
           resultsDiv.appendChild(div);
         });
+        
       } catch (error) {
-        resultsDiv.innerHTML = "<p>Error: " + error.message + "</p>";
+        resultsDiv.innerHTML += `<p class="error">Error: ${error.message}</p>`;
         console.error("Search failed:", error);
       }
+    });
+    
+    // Helper function to escape HTML
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
     }
     
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
+    // Helper function to analyze JSON structure
+    function analyzeStructure(obj, path = "", maxDepth = 3, currentDepth = 0) {
+      if (currentDepth >= maxDepth) return "... (max depth reached)";
+      
+      let result = "";
+      
+      if (Array.isArray(obj)) {
+        result += `Array with ${obj.length} items\n`;
+        if (obj.length > 0) {
+          const itemPath = path ? `${path}[0]` : "[0]";
+          result += `${itemPath}: ${analyzeStructure(obj[0], itemPath, maxDepth, currentDepth + 1)}\n`;
+          if (obj.length > 1) {
+            result += `... and ${obj.length - 1} more items\n`;
+          }
+        }
+      } else if (obj !== null && typeof obj === "object") {
+        const keys = Object.keys(obj);
+        result += `Object with ${keys.length} properties\n`;
+        keys.slice(0, 5).forEach(key => {
+          const propPath = path ? `${path}.${key}` : key;
+          result += `${propPath}: ${analyzeStructure(obj[key], propPath, maxDepth, currentDepth + 1)}\n`;
+        });
+        if (keys.length > 5) {
+          result += `... and ${keys.length - 5} more properties\n`;
+        }
+      } else {
+        result += `${typeof obj}: ${String(obj).substring(0, 50)}${String(obj).length > 50 ? "..." : ""}`;
+      }
+      
+      return result;
     }
   </script>
 </body>
