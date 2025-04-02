@@ -21,6 +21,7 @@
     let dhlabidsArray = [];
     const statusDiv = document.getElementById("status");
     const searchBtn = document.getElementById("searchBtn");
+    const queryInput = document.getElementById("query");
     
     // Add a timestamp to prevent caching
     const timestamp = new Date().getTime();
@@ -57,10 +58,10 @@
         console.error("Failed to load corpus data:", err);
       });
     
-    // Add event listener for search button
-    searchBtn.addEventListener("click", async function() {
+    // Search function
+    async function performSearch() {
       try {
-        const query = document.getElementById("query").value;
+        const query = queryInput.value;
         
         if (!query) {
           alert("Please enter a search term");
@@ -126,6 +127,17 @@
         statusDiv.textContent = `Error: ${error.message}`;
         document.getElementById("results").innerHTML = `<p class="error">Search failed: ${error.message}</p>`;
         console.error("Search failed:", error);
+      }
+    }
+    
+    // Add event listener for search button
+    searchBtn.addEventListener("click", performSearch);
+    
+    // Add event listener for Enter key in the search input
+    queryInput.addEventListener("keypress", function(event) {
+      if (event.key === "Enter") {
+        event.preventDefault(); // Prevent default form submission
+        performSearch();
       }
     });
     
