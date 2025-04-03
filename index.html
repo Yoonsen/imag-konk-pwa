@@ -11,11 +11,8 @@
 </head>
 <body class="container my-4">
   <h1 class="text-center mb-4">Corpus Concordance Viewer</h1>
-  <div class="mb-3">
-    <label for="query" class="form-label">Search term:</label>
-    <input type="text" id="query" class="form-control" placeholder="e.g. Norge" style="width: 100%; max-width: 400px; margin: 0 auto;">
-  </div>
-  <div class="text-center mb-4">
+  <div class="input-group mb-3" style="max-width: 400px; margin: 0 auto;">
+    <input type="text" id="query" class="form-control" placeholder="e.g. Norge">
     <button id="searchBtn" class="btn btn-primary">Search</button>
   </div>
   <div id="status" class="alert alert-info" role="alert"></div>
@@ -120,17 +117,22 @@
         
         let matchCount = 0;
         Object.keys(conc.conc).forEach(key => {
-          const text = conc.conc[key];
+          let text = conc.conc[key];
           const urn = conc.urn[key]; // Extract the URN
           const searchText = (text.match(/<b>(.*?)<\/b>/) || [])[1] || ""; // Extract the bolded term
           const urnLink = `https://www.nb.no/items/${urn}?searchText=${encodeURIComponent(searchText)}`; // Build the clickable URL with searchText
 
+          // Replace the <b> element with a clickable link
+          if (searchText) {
+            text = text.replace(
+              `<b>${searchText}</b>`,
+              `<a href="${urnLink}" target="_blank" class="text-decoration-underline"><b>${searchText}</b></a>`
+            );
+          }
+
           const div = document.createElement("div");
           div.className = "concordance";
-          div.innerHTML = `
-            <p>${text}</p>
-            <a href="${urnLink}" target="_blank" class="btn btn-link">View Full Text</a>
-          `;
+          div.innerHTML = `<p>${text}</p>`;
           resultsDiv.appendChild(div);
           matchCount++;
         });
