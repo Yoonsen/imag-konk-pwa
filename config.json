@@ -1,0 +1,7 @@
+{
+  "appName": "Concordance Viewer",
+  "corpusFile": "corpus.json",
+  "icon192": "icon-192.png",
+  "icon512": "icon-512.png",
+  "themeColor": "#a22"
+}

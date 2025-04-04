@@ -1,5 +1,5 @@
-// This will store our extracted ID values
-let dhlabidsArray = [];
+// This will store our extracted metadata
+let metadataArray = [];
 const statusDiv = document.getElementById("status");
 const searchBtn = document.getElementById("searchBtn");
 const queryInput = document.getElementById("query");
@@ -10,29 +10,31 @@ const jsonUrl = `corpus.json?v=${timestamp}`;
 
 statusDiv.textContent = "Loading corpus data...";
 
-// Load the corpus data when the page loads
+// Function to sanitize JSON data
+function sanitizeJSON(data) {
+  return JSON.parse(
+    JSON.stringify(data, (key, value) => (typeof value === "number" && isNaN(value) ? null : value))
+  );
+}
+
+// Load the metadata when the page loads
 fetch(jsonUrl)
   .then(res => res.json())
   .then(data => {
-    if (data && data.dhlabids) {
-      if (Array.isArray(data.dhlabids)) {
-        dhlabidsArray = data.dhlabids;
-        statusDiv.textContent = `Loaded corpus with ${dhlabidsArray.length} documents (array format)`;
-      } else if (typeof data.dhlabids === "object") {
-        dhlabidsArray = Object.values(data.dhlabids);
-        statusDiv.textContent = `Loaded corpus with ${dhlabidsArray.length} documents (object format)`;
-      } else {
-        statusDiv.textContent = "Error: dhlabids has unexpected format";
-        console.error("Unexpected dhlabids format:", typeof data.dhlabids);
-      }
+    const sanitizedData = sanitizeJSON(data); // Sanitize the JSON data
+    console.log("Loaded and sanitized data structure:", sanitizedData);
+
+    if (sanitizedData && Array.isArray(sanitizedData.dhlabids)) {
+      metadataArray = sanitizedData.dhlabids; // Store the array of metadata objects
+      statusDiv.textContent = `Loaded metadata for ${metadataArray.length} documents.`;
     } else {
-      statusDiv.textContent = "Error: No dhlabids found in JSON";
-      console.error("No dhlabids in data:", data);
+      statusDiv.textContent = "Error: No valid metadata array found in JSON.";
+      console.error("No valid metadata array in data:", sanitizedData);
     }
   })
   .catch(err => {
-    statusDiv.textContent = `Error loading corpus: ${err.message}`;
-    console.error("Failed to load corpus data:", err);
+    statusDiv.textContent = `Error loading metadata: ${err.message}`;
+    console.error("Failed to load metadata:", err);
   });
 
 // Search function
@@ -45,8 +47,8 @@ async function performSearch() {
       return;
     }
 
-    if (!dhlabidsArray || dhlabidsArray.length === 0) {
-      alert("Corpus data not loaded yet. Please try again.");
+    if (!metadataArray || metadataArray.length === 0) {
+      alert("Metadata not loaded yet. Please try again.");
       return;
     }
 
@@ -54,15 +56,18 @@ async function performSearch() {
     statusDiv.textContent = "Searching...";
     resultsDiv.innerHTML = "";
 
-    const idsToUse = [...dhlabidsArray].slice(0, 20000);
+    // Extract the list of URNs from the metadata
+    const urnsToUse = metadataArray.map(item => item.urn);
 
     const concBody = {
-      dhlabids: idsToUse,
+      urns: urnsToUse, // Send URNs instead of dhlabids
       query: query,
       limit: 1000,
       window: 20,
       html_formatting: true
     };
+
+    console.log("Request body:", concBody);
 
     const concResp = await fetch("https://api.nb.no/dhlab/conc", {
       method: "POST",
@@ -71,7 +76,8 @@ async function performSearch() {
     });
 
     if (!concResp.ok) {
-      throw new Error(`HTTP error ${concResp.status}`);
+      const errorText = await concResp.text();
+      throw new Error(`HTTP error ${concResp.status}: ${errorText}`);
     }
 
     const conc = await concResp.json();
@@ -83,33 +89,7 @@ async function performSearch() {
       return;
     }
 
-    let matchCount = 0;
-
-    Object.keys(conc.conc).forEach(key => {
-      let text = conc.conc[key];
-      const urn = conc.urn[key];
-      const searchText = (text.match(/<b>(.*?)<\/b>/) || [])[1] || "";
-      const urnLink = `https://www.nb.no/items/${urn}?searchText=${encodeURIComponent(searchText)}`;
-
-      if (searchText) {
-        text = text.replace(
-          `<b>${searchText}</b>`,
-          `<a href="${urnLink}" target="_blank" class="text-decoration-underline"><b>${searchText}</b></a>`
-        );
-      }
-
-      const div = document.createElement("div");
-      div.className = "concordance";
-      div.setAttribute("data-urn", urn);
-      div.innerHTML = `<p>${text}</p>`;
-      resultsDiv.appendChild(div);
-      matchCount++;
-    });
-
-    statusDiv.textContent = `Found ${matchCount} matches for "${query}"`;
-
-    // Add hover functionality
-    addHoverFunctionality();
+    renderConcordances(conc);
   } catch (error) {
     statusDiv.textContent = `Error: ${error.message}`;
     document.getElementById("results").innerHTML = `<p class="error">Search failed: ${error.message}</p>`;
@@ -117,35 +97,77 @@ async function performSearch() {
   }
 }
 
-// Add hover functionality
-function addHoverFunctionality() {
-  const concordances = document.querySelectorAll(".concordance");
+// Render concordances with metadata
+function renderConcordances(conc) {
+  const resultsDiv = document.getElementById("results");
+  resultsDiv.innerHTML = ""; // Clear previous results
 
-  concordances.forEach(concordance => {
-    concordance.addEventListener("mouseover", event => {
-      const urn = concordance.getAttribute("data-urn");
-      const urnLink = `https://www.nb.no/items/${urn}`;
+  let matchCount = 0;
 
-      const tooltip = document.createElement("div");
-      tooltip.id = "metadata-tooltip";
-      tooltip.className = "tooltip";
-      tooltip.innerHTML = `
-        <a href="${urnLink}" target="_blank" class="btn btn-link p-0">View Document</a>
-      `;
+  Object.keys(conc.conc).forEach(key => {
+    let text = conc.conc[key];
+    const urn = conc.urn[key]; // Use URN directly
+    const metadata = metadataArray.find(item => item.urn === urn); // Match metadata by URN
 
-      document.body.appendChild(tooltip);
+    // Collect all terms inside <b> elements
+    const boldTerms = Array.from(text.matchAll(/<b>(.*?)<\/b>/g)).map(match => match[1]);
+    const searchText = boldTerms.join(" ");
+    const tokenCount = boldTerms.length; // Number of tokens
 
-      tooltip.style.left = `${event.pageX + 10}px`;
-      tooltip.style.top = `${event.pageY + 10}px`;
+    // Construct the clickable URL with searchText
+    const urnLink = `https://www.nb.no/items/${urn}?searchText="${encodeURIComponent(searchText)}"~${tokenCount}`;
+
+    // Create the concordance line
+    const div = document.createElement("div");
+    div.className = "concordance";
+    div.setAttribute("data-urn", urn); // Attach URN for hover functionality
+    div.innerHTML = `<p>${text}</p>`;
+
+    // Add click event to the concordance line
+    div.addEventListener("click", () => {
+      console.log(`Concordance clicked: ${urn}`);
+      window.open(urnLink, "_blank"); // Open the library page in a new tab
     });
 
-    concordance.addEventListener("mouseout", () => {
+    // Add hover functionality for metadata pop-up
+    div.addEventListener("mouseover", event => {
+      let tooltip = document.getElementById("metadata-tooltip");
+      if (!tooltip) {
+        tooltip = document.createElement("div");
+        tooltip.id = "metadata-tooltip";
+        tooltip.style.position = "absolute";
+        tooltip.style.backgroundColor = "#fff";
+        tooltip.style.border = "1px solid #ccc";
+        tooltip.style.padding = "10px";
+        tooltip.style.boxShadow = "0 4px 8px rgba(0, 0, 0, 0.1)";
+        tooltip.style.zIndex = "1000";
+        tooltip.style.cursor = "pointer";
+        tooltip.innerHTML = `
+          <strong>${metadata?.title || "Unknown Title"}</strong><br>
+          <em>${metadata?.author || "Unknown Author"}</em><br>
+          <span>${metadata?.year || "Unknown Year"}</span>
+        `;
+        document.body.appendChild(tooltip);
+      }
+
+      // Position the tooltip to overlap with the concordance line
+      const rect = div.getBoundingClientRect();
+      tooltip.style.left = `${rect.left}px`; // Align with the left of the concordance
+      tooltip.style.top = `${rect.bottom + 5}px`; // Place slightly below the concordance
+    });
+
+    div.addEventListener("mouseout", () => {
       const tooltip = document.getElementById("metadata-tooltip");
       if (tooltip) {
         tooltip.remove();
       }
     });
+
+    resultsDiv.appendChild(div);
+    matchCount++;
   });
+
+  statusDiv.textContent = `Found ${matchCount} matches for your query.`;
 }
 
 // Add event listeners
