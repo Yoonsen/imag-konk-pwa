@@ -3,11 +3,11 @@
 <head>
   <title>ImagiNation Concordances</title>
   <meta charset="UTF-8" />
-  <link rel="manifest" href="manifest.json">
+  <link rel="manifest" href="manifest.json?v=1.0">
   <meta name="theme-color" content="#a22">
-  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="icon" href="icon-192.png?v=1.0" type="image/png">
   <!-- Add Bootstrap CSS -->
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css?v=1.0" rel="stylesheet">
 </head>
 <body class="container my-4">
   <h1 class="text-center mb-4">ImagiNation Concordances</h1>
@@ -26,7 +26,7 @@
     const searchBtn = document.getElementById("searchBtn");
     const queryInput = document.getElementById("query");
     
-    // Add a timestamp to prevent caching
+    // Add a timestamp to prevent caching for dynamic resources
     const timestamp = new Date().getTime();
     const jsonUrl = `corpus.json?v=${timestamp}`;
     
@@ -109,7 +109,7 @@
         const conc = await concResp.json();
         
         statusDiv.textContent = `Found results for "${query}"`;
-        resultsDiv.innerHTML += "<h2>Concordances</h2>";
+        resultsDiv.innerHTML += ""; // Removed the "<h2>Concordances</h2>" text
         
         if (!conc.conc || Object.keys(conc.conc).length === 0) {
           resultsDiv.innerHTML += "<p>No results found for this query.</p>";
