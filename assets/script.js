@@ -56,6 +56,17 @@ async function performSearch() {
     statusDiv.textContent = "Searching...";
     resultsDiv.innerHTML = "";
 
+    // Add a loading spinner
+    const spinner = document.createElement("div");
+    spinner.id = "loading-spinner";
+    spinner.style.textAlign = "center";
+    spinner.innerHTML = `
+      <div class="spinner-border text-primary" role="status">
+        <span class="visually-hidden">Loading...</span>
+      </div>
+    `;
+    resultsDiv.appendChild(spinner);
+
     // Extract the list of URNs from the metadata
     const urnsToUse = metadataArray.map(item => item.urn);
 
@@ -82,6 +93,9 @@ async function performSearch() {
 
     const conc = await concResp.json();
 
+    // Remove the spinner after fetching
+    spinner.remove();
+
     statusDiv.textContent = `Found results for "${query}"`;
 
     if (!conc.conc || Object.keys(conc.conc).length === 0) {
@@ -91,6 +105,10 @@ async function performSearch() {
 
     renderConcordances(conc);
   } catch (error) {
+    // Remove the spinner if an error occurs
+    const spinner = document.getElementById("loading-spinner");
+    if (spinner) spinner.remove();
+
     statusDiv.textContent = `Error: ${error.message}`;
     document.getElementById("results").innerHTML = `<p class="error">Search failed: ${error.message}</p>`;
     console.error("Search failed:", error);
