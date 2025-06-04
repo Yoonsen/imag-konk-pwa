@@ -46,14 +46,19 @@ const CATEGORIES = [
   "Teknologi / håndverk / landbruk / havbruk"
 ];
 
+const MIN_YEAR = 1814;
+const MAX_YEAR = 1905;
+
 function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All Categories']);
+  const [yearRange, setYearRange] = useState<[number, number]>([MIN_YEAR, MAX_YEAR]);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<JSX.Element[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [showFilterModal, setShowFilterModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
 
   useEffect(() => {
@@ -99,10 +104,16 @@ function App() {
     setResults([]);
 
     try {
-      // Filter URNs by selected categories
-      const filteredMetadata = selectedCategories.includes('All Categories')
-        ? metadataArray
-        : metadataArray.filter(item => item.category && selectedCategories.includes(item.category));
+      // Filter URNs by selected categories and year range
+      const filteredMetadata = metadataArray.filter(item => {
+        const categoryMatch = selectedCategories.includes('All Categories') || 
+          (item.category && selectedCategories.includes(item.category));
+        
+        const year = parseInt(item.year || '0');
+        const yearMatch = year >= yearRange[0] && year <= yearRange[1];
+        
+        return categoryMatch && yearMatch;
+      });
 
       const urnsToUse = filteredMetadata.map(item => item.urn);
       const concBody = {
@@ -128,7 +139,10 @@ function App() {
       const categoryText = selectedCategories.includes('All Categories') 
         ? '' 
         : ` in categories: ${selectedCategories.join(', ')}`;
-      setStatus(`Found results for "${query}"${categoryText}`);
+      const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+        ? ''
+        : ` from ${yearRange[0]} to ${yearRange[1]}`;
+      setStatus(`Found results for "${query}"${categoryText}${yearText}`);
 
       if (!conc.conc || Object.keys(conc.conc).length === 0) {
         setResults([<p key="no-results">No results found for this query.</p>]);
@@ -188,11 +202,19 @@ function App() {
       }
     }
     
-    // If "All Categories" is selected, deselect other options
     if (selectedValues.includes('All Categories')) {
       setSelectedCategories(['All Categories']);
     } else {
       setSelectedCategories(selectedValues);
+    }
+  };
+
+  const handleYearRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = parseInt(e.target.value);
+    if (e.target.name === 'minYear') {
+      setYearRange([value, yearRange[1]]);
+    } else {
+      setYearRange([yearRange[0], value]);
     }
   };
 
@@ -201,61 +223,43 @@ function App() {
       <h1 className="text-center mb-4">ImagiNation Concordances</h1>
       <div className="row justify-content-center mb-3">
         <div className="col-md-8">
-          <div className="row g-3">
-            <div className="col-md-8">
-              <div className="input-group">
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="e.g. Norge"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && performSearch()}
-                />
-                <button 
-                  className="btn btn-primary"
-                  onClick={performSearch}
-                  disabled={isLoading}
-                >
-                  {isLoading ? (
-                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-                  ) : (
-                    'Search'
-                  )}
-                </button>
-              </div>
-            </div>
-            <div className="col-md-4">
-              <div className="d-flex flex-column">
-                <label htmlFor="categorySelect" className="form-label mb-1">Filter by categories:</label>
-                <select 
-                  id="categorySelect"
-                  className="form-select" 
-                  multiple
-                  value={selectedCategories}
-                  onChange={handleCategoryChange}
-                  size={5}
-                >
-                  {CATEGORIES.map((category, index) => (
-                    <option key={index} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
-                <small className="text-muted mt-1">
-                  Hold Ctrl/Cmd to select multiple categories
-                </small>
-              </div>
-            </div>
+          <div className="input-group">
+            <input
+              type="text"
+              className="form-control"
+              placeholder="e.g. Norge"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && performSearch()}
+            />
+            <button 
+              className="btn btn-outline-secondary"
+              type="button"
+              onClick={() => setShowFilterModal(true)}
+            >
+              <i className="bi bi-funnel"></i>
+            </button>
+            <button 
+              className="btn btn-primary"
+              onClick={performSearch}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+              ) : (
+                'Search'
+              )}
+            </button>
           </div>
         </div>
       </div>
+
       <div className="border p-3" style={{ overflowY: "auto", height: "calc(100vh - 200px)" }}>
         <div style={{ fontSize: "12px", marginBottom: "10px", color: "#555" }}>{status}</div>
         {results}
       </div>
 
-      {/* Bootstrap Modal */}
+      {/* Results Modal */}
       <div className={`modal fade ${showModal ? 'show' : ''}`} 
            style={{ display: showModal ? 'block' : 'none' }} 
            tabIndex={-1} 
@@ -296,7 +300,89 @@ function App() {
           </div>
         </div>
       </div>
+
+      {/* Filter Modal */}
+      <div className={`modal fade ${showFilterModal ? 'show' : ''}`} 
+           style={{ display: showFilterModal ? 'block' : 'none' }} 
+           tabIndex={-1} 
+           role="dialog">
+        <div className="modal-dialog" role="document">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">Filter Results</h5>
+              <button 
+                type="button" 
+                className="btn-close" 
+                onClick={() => setShowFilterModal(false)}
+                aria-label="Close"
+              ></button>
+            </div>
+            <div className="modal-body">
+              <div className="mb-4">
+                <label className="form-label">Categories</label>
+                <select 
+                  className="form-select" 
+                  multiple
+                  value={selectedCategories}
+                  onChange={handleCategoryChange}
+                  size={5}
+                >
+                  {CATEGORIES.map((category, index) => (
+                    <option key={index} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+                <small className="text-muted d-block mt-1">
+                  Hold Ctrl/Cmd to select multiple categories
+                </small>
+              </div>
+
+              <div className="mb-3">
+                <label className="form-label">Year Range: {yearRange[0]} - {yearRange[1]}</label>
+                <div className="d-flex gap-3">
+                  <div className="flex-grow-1">
+                    <label className="form-label">From</label>
+                    <input
+                      type="range"
+                      className="form-range"
+                      min={MIN_YEAR}
+                      max={MAX_YEAR}
+                      value={yearRange[0]}
+                      name="minYear"
+                      onChange={handleYearRangeChange}
+                    />
+                  </div>
+                  <div className="flex-grow-1">
+                    <label className="form-label">To</label>
+                    <input
+                      type="range"
+                      className="form-range"
+                      min={MIN_YEAR}
+                      max={MAX_YEAR}
+                      value={yearRange[1]}
+                      name="maxYear"
+                      onChange={handleYearRangeChange}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button 
+                type="button" 
+                className="btn btn-secondary" 
+                onClick={() => setShowFilterModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {showModal && <div className="modal-backdrop fade show"></div>}
+      {showFilterModal && <div className="modal-backdrop fade show"></div>}
     </div>
   );
 }
