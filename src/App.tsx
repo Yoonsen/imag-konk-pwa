@@ -58,7 +58,7 @@ function App() {
   const [authorSearch, setAuthorSearch] = useState('');
   const [yearRange, setYearRange] = useState<[number, number]>([MIN_YEAR, MAX_YEAR]);
   const [status, setStatus] = useState('Loading corpus data...');
-  const [results, setResults] = useState<JSX.Element[]>([]);
+  const [results, setResults] = useState<React.ReactNode>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
@@ -83,8 +83,8 @@ function App() {
           const authors = Array.from(new Set(
             sanitizedData.dhlabids
               .map((item: Metadata) => item.author)
-              .filter((author): author is string => !!author)
-          )).sort();
+              .filter((author: string | undefined): author is string => !!author)
+          )).sort() as string[];
           setUniqueAuthors(authors);
           setStatus(`Loaded metadata for ${sanitizedData.dhlabids.length} documents.`);
         } else {
@@ -111,7 +111,7 @@ function App() {
 
     setIsLoading(true);
     setStatus("Searching...");
-    setResults([]);
+    setResults(null);
 
     try {
       // Filter URNs by selected categories, authors, and year range
@@ -158,10 +158,10 @@ function App() {
       const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
         ? ''
         : ` from ${yearRange[0]} to ${yearRange[1]}`;
-      setStatus(`Found results for "${query}"${categoryText}${authorText}${yearText}`);
+      setStatus(`Found ${Object.keys(conc.conc).length} results for "${query}"${categoryText}${authorText}${yearText}`);
 
       if (!conc.conc || Object.keys(conc.conc).length === 0) {
-        setResults([<p key="no-results">No results found for this query.</p>]);
+        setResults(<p key="no-results">No results found for this query.</p>);
         return;
       }
 
@@ -190,7 +190,7 @@ function App() {
       setResults(newResults);
     } catch (error) {
       setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setResults([<p key="error" className="error">Search failed: {error instanceof Error ? error.message : 'Unknown error'}</p>]);
+      setResults(<p key="error" className="error">Search failed: {error instanceof Error ? error.message : 'Unknown error'}</p>);
     } finally {
       setIsLoading(false);
     }
