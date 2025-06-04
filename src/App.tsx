@@ -51,8 +51,11 @@ const MAX_YEAR = 1905;
 
 function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
+  const [uniqueAuthors, setUniqueAuthors] = useState<string[]>([]);
   const [query, setQuery] = useState('');
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All Categories']);
+  const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
+  const [authorSearch, setAuthorSearch] = useState('');
   const [yearRange, setYearRange] = useState<[number, number]>([MIN_YEAR, MAX_YEAR]);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<JSX.Element[]>([]);
@@ -69,13 +72,20 @@ function App() {
       .then(res => res.json())
       .then(data => {
         const sanitizedData = JSON.parse(
-          JSON.stringify(data, (key, value) => 
+          JSON.stringify(data, (_, value) => 
             typeof value === "number" && isNaN(value) ? null : value
           )
         );
 
         if (sanitizedData && Array.isArray(sanitizedData.dhlabids)) {
           setMetadataArray(sanitizedData.dhlabids);
+          // Extract unique authors
+          const authors = Array.from(new Set(
+            sanitizedData.dhlabids
+              .map((item: Metadata) => item.author)
+              .filter((author): author is string => !!author)
+          )).sort();
+          setUniqueAuthors(authors);
           setStatus(`Loaded metadata for ${sanitizedData.dhlabids.length} documents.`);
         } else {
           setStatus("Error: No valid metadata array found in JSON.");
@@ -104,15 +114,18 @@ function App() {
     setResults([]);
 
     try {
-      // Filter URNs by selected categories and year range
+      // Filter URNs by selected categories, authors, and year range
       const filteredMetadata = metadataArray.filter(item => {
         const categoryMatch = selectedCategories.includes('All Categories') || 
           (item.category && selectedCategories.includes(item.category));
         
+        const authorMatch = selectedAuthors.length === 0 || 
+          (item.author && selectedAuthors.includes(item.author));
+        
         const year = parseInt(item.year || '0');
         const yearMatch = year >= yearRange[0] && year <= yearRange[1];
         
-        return categoryMatch && yearMatch;
+        return categoryMatch && authorMatch && yearMatch;
       });
 
       const urnsToUse = filteredMetadata.map(item => item.urn);
@@ -139,10 +152,13 @@ function App() {
       const categoryText = selectedCategories.includes('All Categories') 
         ? '' 
         : ` in categories: ${selectedCategories.join(', ')}`;
+      const authorText = selectedAuthors.length > 0
+        ? ` by authors: ${selectedAuthors.join(', ')}`
+        : '';
       const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
         ? ''
         : ` from ${yearRange[0]} to ${yearRange[1]}`;
-      setStatus(`Found results for "${query}"${categoryText}${yearText}`);
+      setStatus(`Found results for "${query}"${categoryText}${authorText}${yearText}`);
 
       if (!conc.conc || Object.keys(conc.conc).length === 0) {
         setResults([<p key="no-results">No results found for this query.</p>]);
@@ -192,6 +208,25 @@ function App() {
       setShowModal(true);
     }
   };
+
+  const handleAuthorSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setAuthorSearch(e.target.value);
+  };
+
+  const handleAuthorSelect = (author: string) => {
+    if (!selectedAuthors.includes(author)) {
+      setSelectedAuthors([...selectedAuthors, author]);
+    }
+    setAuthorSearch('');
+  };
+
+  const handleAuthorRemove = (authorToRemove: string) => {
+    setSelectedAuthors(selectedAuthors.filter(author => author !== authorToRemove));
+  };
+
+  const filteredAuthors = uniqueAuthors.filter(author => 
+    author.toLowerCase().includes(authorSearch.toLowerCase())
+  ).slice(0, 10); // Limit to 10 suggestions
 
   const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const options = e.target.options;
@@ -306,7 +341,7 @@ function App() {
            style={{ display: showFilterModal ? 'block' : 'none' }} 
            tabIndex={-1} 
            role="dialog">
-        <div className="modal-dialog" role="document">
+        <div className="modal-dialog modal-lg" role="document">
           <div className="modal-content">
             <div className="modal-header">
               <h5 className="modal-title">Filter Results</h5>
@@ -318,6 +353,47 @@ function App() {
               ></button>
             </div>
             <div className="modal-body">
+              <div className="mb-4">
+                <label className="form-label">Authors</label>
+                <div className="input-group mb-2">
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="Search authors..."
+                    value={authorSearch}
+                    onChange={handleAuthorSearch}
+                  />
+                </div>
+                {authorSearch && filteredAuthors.length > 0 && (
+                  <div className="list-group mb-2">
+                    {filteredAuthors.map(author => (
+                      <button
+                        key={author}
+                        className="list-group-item list-group-item-action"
+                        onClick={() => handleAuthorSelect(author)}
+                      >
+                        {author}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {selectedAuthors.length > 0 && (
+                  <div className="d-flex flex-wrap gap-2">
+                    {selectedAuthors.map(author => (
+                      <span key={author} className="badge bg-primary d-flex align-items-center">
+                        {author}
+                        <button
+                          type="button"
+                          className="btn-close btn-close-white ms-2"
+                          onClick={() => handleAuthorRemove(author)}
+                          aria-label="Remove"
+                        ></button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="mb-4">
                 <label className="form-label">Categories</label>
                 <select 
