@@ -22,9 +22,34 @@ interface ModalData {
   link: string;
 }
 
+const CATEGORIES = [
+  "All Categories",
+  "Barnelitteratur",
+  "Biografi / memoar",
+  "Diktning: Dramatikk",
+  "Diktning: Dramatikk # Diktning: oversatt",
+  "Diktning: Epikk",
+  "Diktning: Epikk # Diktning: oversatt",
+  "Diktning: Lyrikk",
+  "Diktning: Lyrikk # Diktning: oversatt",
+  "Diverse",
+  "Filosofi / estetikk / språk",
+  "Historie / geografi",
+  "Lesebok / skolebøker / pedagogikk",
+  "Litteraturhistorie / litteraturkritikk",
+  "Naturvitenskap / medisin",
+  "Reiselitteratur",
+  "Religiøse / oppbyggelige tekster",
+  "Samfunn / politikk / juss",
+  "Skisser / epistler / brev / essay / kåseri",
+  "Taler / sanger / leilighetstekster",
+  "Teknologi / håndverk / landbruk / havbruk"
+];
+
 function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
   const [query, setQuery] = useState('');
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(['All Categories']);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<JSX.Element[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -74,7 +99,12 @@ function App() {
     setResults([]);
 
     try {
-      const urnsToUse = metadataArray.map(item => item.urn);
+      // Filter URNs by selected categories
+      const filteredMetadata = selectedCategories.includes('All Categories')
+        ? metadataArray
+        : metadataArray.filter(item => item.category && selectedCategories.includes(item.category));
+
+      const urnsToUse = filteredMetadata.map(item => item.urn);
       const concBody = {
         urns: urnsToUse,
         query: query,
@@ -95,7 +125,10 @@ function App() {
       }
 
       const conc: Concordance = await concResp.json();
-      setStatus(`Found results for "${query}"`);
+      const categoryText = selectedCategories.includes('All Categories') 
+        ? '' 
+        : ` in categories: ${selectedCategories.join(', ')}`;
+      setStatus(`Found results for "${query}"${categoryText}`);
 
       if (!conc.conc || Object.keys(conc.conc).length === 0) {
         setResults([<p key="no-results">No results found for this query.</p>]);
@@ -146,29 +179,76 @@ function App() {
     }
   };
 
+  const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const options = e.target.options;
+    const selectedValues: string[] = [];
+    for (let i = 0; i < options.length; i++) {
+      if (options[i].selected) {
+        selectedValues.push(options[i].value);
+      }
+    }
+    
+    // If "All Categories" is selected, deselect other options
+    if (selectedValues.includes('All Categories')) {
+      setSelectedCategories(['All Categories']);
+    } else {
+      setSelectedCategories(selectedValues);
+    }
+  };
+
   return (
     <div className="container my-4">
       <h1 className="text-center mb-4">ImagiNation Concordances</h1>
-      <div className="input-group mb-3" style={{ maxWidth: "400px", margin: "0 auto" }}>
-        <input
-          type="text"
-          className="form-control"
-          placeholder="e.g. Norge"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && performSearch()}
-        />
-        <button 
-          className="btn btn-primary"
-          onClick={performSearch}
-          disabled={isLoading}
-        >
-          {isLoading ? (
-            <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-          ) : (
-            'Search'
-          )}
-        </button>
+      <div className="row justify-content-center mb-3">
+        <div className="col-md-8">
+          <div className="row g-3">
+            <div className="col-md-8">
+              <div className="input-group">
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="e.g. Norge"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && performSearch()}
+                />
+                <button 
+                  className="btn btn-primary"
+                  onClick={performSearch}
+                  disabled={isLoading}
+                >
+                  {isLoading ? (
+                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                  ) : (
+                    'Search'
+                  )}
+                </button>
+              </div>
+            </div>
+            <div className="col-md-4">
+              <div className="d-flex flex-column">
+                <label htmlFor="categorySelect" className="form-label mb-1">Filter by categories:</label>
+                <select 
+                  id="categorySelect"
+                  className="form-select" 
+                  multiple
+                  value={selectedCategories}
+                  onChange={handleCategoryChange}
+                  size={5}
+                >
+                  {CATEGORIES.map((category, index) => (
+                    <option key={index} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+                <small className="text-muted mt-1">
+                  Hold Ctrl/Cmd to select multiple categories
+                </small>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
       <div className="border p-3" style={{ overflowY: "auto", height: "calc(100vh - 200px)" }}>
         <div style={{ fontSize: "12px", marginBottom: "10px", color: "#555" }}>{status}</div>
