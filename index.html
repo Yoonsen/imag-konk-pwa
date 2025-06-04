@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ImagiNation Concordances</title>
+  <link rel="manifest" href="data:application/json;base64,ew0KICAgICJuYW1lIjogIkNvbmNvcmRhbmNlIGZyb20gY29ycHVzIiwNCiAgICAic2hvcnRfbmFtZSI6ICJDb25jb3JkYW5jZXMiLA0KICAgICJzdGFydF91cmwiOiAiLi9pbmRleC5odG1sIiwNCiAgICAiZGlzcGxheSI6ICJzdGFuZGFsb25lIiwNCiAgICAiYmFja2dyb3VuZF9jb2xvciI6ICIjZmZmZmZmIiwNCiAgICAidGhlbWVfY29sb3IiOiAiI2EyMiIsDQogICAgImljb25zIjogWw0KICAgICAgew0KICAgICAgICAic3JjIjogImljb24tMTkyLnBuZyIsDQogICAgICAgICJzaXplcyI6ICIxOTJ4MTkyIiwNCiAgICAgICAgInR5cGUiOiAiaW1hZ2UvcG5nIg0KICAgICAgfSwNCiAgICAgIHsNCiAgICAgICAgInNyYyI6ICJpY29uLTUxMi5wbmciLA0KICAgICAgICAic2l6ZXMiOiAiNTEyeDUxMiIsDQogICAgICAgICJ0eXBlIjogImltYWdlL3BuZyINCiAgICAgIH0NCiAgICBdDQogIH0NCiAg">
+  <meta name="theme-color" content="#a22">
+  <link rel="icon" href="/imag-konk-pwa/assets/icon-192-cc324e1c.png" type="image/png">
+  <link rel="icon" href="/imag-konk-pwa/assets/icon-512-d3b8aba7.png" type="image/png">
+  <!-- Add Bootstrap CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css?v=1.0" rel="stylesheet">
+  <!-- Add Custom Styles -->
+  
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+  <script type="module" crossorigin src="/imag-konk-pwa/assets/index-bdced279.js"></script>
+  <link rel="stylesheet" href="/imag-konk-pwa/assets/index-91a82bc1.css">
+</head>
+<body>
+  <div id="root"></div>
+  
+  <!-- Add Bootstrap JS -->
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <!-- Load configuration dynamically -->
+  <script>
+    fetch('config.json')
+      .then(res => res.json())
+      .then(config => {
+        document.getElementById('app-title').textContent = config.appName;
+        document.getElementById('app-header').textContent = config.appName;
+        document.getElementById('manifest-link').href = config.manifest || 'manifest.json';
+        document.getElementById('theme-color-meta').content = config.themeColor;
+        document.getElementById('icon-192-link').href = config.icon192;
+        document.getElementById('icon-512-link').href = config.icon512;
+      })
+      .catch(err => console.error('Failed to load config:', err));
+  </script>
+  <!-- Add Custom Script -->
+  <script src="assets/script.js"></script>
+</body>
+</html>
