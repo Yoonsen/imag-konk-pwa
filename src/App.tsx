@@ -64,11 +64,17 @@ function App() {
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
   const [authorSearch, setAuthorSearch] = useState('');
   const [yearRange, setYearRange] = useState<[number, number]>([MIN_YEAR, MAX_YEAR]);
+  const [beforeWindow, setBeforeWindow] = useState<number>(5);
+  const [afterWindow, setAfterWindow] = useState<number>(5);
+  const [perBook, setPerBook] = useState<number>(3);
+  const [totalLimit, setTotalLimit] = useState<number>(200);
+  const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<React.ReactNode>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
+  const [showSearchParamsModal, setShowSearchParamsModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -150,19 +156,24 @@ function App() {
 
       const filterIds = filteredMetadata.map(item => item.id);
       const useFilter = filterIds.length > 0 && filterIds.length < metadataArray.length;
+      const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
+      const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
+      const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
+      const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
+      const normalizedWindow = Math.max(normalizedBefore, normalizedAfter);
 
       const concBody = {
         wordA,
         wordB,
-        window: 20,
-        before: 5,
-        after: 5,
-        perBook: 3,
-        totalLimit: 200,
+        window: normalizedWindow,
+        before: normalizedBefore,
+        after: normalizedAfter,
+        perBook: normalizedPerBook,
+        totalLimit: normalizedTotalLimit,
         schema: "unigrams",
         useFilter,
         filterIds: useFilter ? filterIds : [],
-        symmetric: true,
+        symmetric: isSymmetric,
         excludeSelf: false
       };
 
@@ -298,41 +309,25 @@ function App() {
       return;
     }
 
-    const escapeCsv = (value: string | number | undefined) => {
-      const safeValue = String(value ?? '');
-      if (safeValue.includes('"') || safeValue.includes(',') || safeValue.includes('\n')) {
-        return `"${safeValue.replace(/"/g, '""')}"`;
-      }
-      return safeValue;
-    };
-
-    const header = ['bookId', 'pos', 'frag', 'urn', 'title', 'author', 'year', 'category'];
     const rows = lastConcordanceRows.map((row) => {
       const metadata = metadataArray.find((item) => item.id === row.bookId);
-      return [
-        row.bookId,
-        row.pos,
-        row.frag,
-        metadata?.urn ?? '',
-        metadata?.title ?? '',
-        metadata?.author ?? '',
-        metadata?.year ?? '',
-        metadata?.category ?? ''
-      ].map(escapeCsv).join(',');
+      return {
+        bookId: row.bookId,
+        pos: row.pos,
+        frag: row.frag,
+        urn: metadata?.urn ?? '',
+        title: metadata?.title ?? '',
+        author: metadata?.author ?? '',
+        year: metadata?.year ?? '',
+        category: metadata?.category ?? ''
+      };
     });
 
-    const csv = [header.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-
     const dateStamp = new Date().toISOString().slice(0, 10);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `concordance-${dateStamp}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Concordance');
+    XLSX.writeFile(workbook, `concordance-${dateStamp}.xlsx`);
   };
 
   const handleConcordanceClick = (metadata: Metadata | undefined, link: string) => {
@@ -410,8 +405,9 @@ function App() {
               className="btn btn-outline-secondary"
               type="button"
               onClick={() => setShowFilterModal(true)}
+              title="Korpusfiltrering"
             >
-              <i className="bi bi-funnel"></i>
+              <i className="bi bi-tools"></i>
             </button>
             <button
               className="btn btn-outline-secondary"
@@ -419,7 +415,15 @@ function App() {
               onClick={handleCorpusUploadClick}
               title="Upload corpus Excel file"
             >
-              <i className="bi bi-file-earmark-arrow-up"></i>
+              <i className="bi bi-file-earmark-spreadsheet"></i>
+            </button>
+            <button
+              className="btn btn-outline-secondary"
+              type="button"
+              onClick={() => setShowSearchParamsModal(true)}
+              title="Sokeparametre"
+            >
+              <i className="bi bi-sliders"></i>
             </button>
             <button 
               className="btn btn-primary"
@@ -432,15 +436,17 @@ function App() {
                 'Search'
               )}
             </button>
-            <button
-              className="btn btn-outline-secondary"
-              type="button"
-              onClick={handleDownloadConcordance}
-              title="Download concordance"
-              disabled={lastConcordanceRows.length === 0}
-            >
-              <i className="bi bi-download"></i>
-            </button>
+            <div className="ms-2">
+              <button
+                className="btn btn-outline-secondary"
+                type="button"
+                onClick={handleDownloadConcordance}
+                title="Download concordance (.xlsx)"
+                disabled={lastConcordanceRows.length === 0}
+              >
+                <i className="bi bi-download"></i>
+              </button>
+            </div>
           </div>
           <input
             ref={fileInputRef}
@@ -577,7 +583,7 @@ function App() {
                 </small>
               </div>
 
-              <div className="mb-3">
+              <div className="mb-4">
                 <label className="form-label">Year Range: {yearRange[0]} - {yearRange[1]}</label>
                 <div className="d-flex gap-3">
                   <div className="flex-grow-1">
@@ -620,8 +626,100 @@ function App() {
         </div>
       </div>
 
+      {/* Search Params Modal */}
+      <div className={`modal fade ${showSearchParamsModal ? 'show' : ''}`}
+           style={{ display: showSearchParamsModal ? 'block' : 'none' }}
+           tabIndex={-1}
+           role="dialog">
+        <div className="modal-dialog" role="document">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">Sokeparametre</h5>
+              <button
+                type="button"
+                className="btn-close"
+                onClick={() => setShowSearchParamsModal(false)}
+                aria-label="Close"
+              ></button>
+            </div>
+            <div className="modal-body">
+              <div className="row g-3">
+                <div className="col-md-6">
+                  <label className="form-label">Before</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={0}
+                    step={1}
+                    value={beforeWindow}
+                    onChange={(e) => setBeforeWindow(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">After</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={0}
+                    step={1}
+                    value={afterWindow}
+                    onChange={(e) => setAfterWindow(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">Samples per book</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={1}
+                    step={1}
+                    value={perBook}
+                    onChange={(e) => setPerBook(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">Maks visning (cutoff)</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={1}
+                    step={1}
+                    value={totalLimit}
+                    onChange={(e) => setTotalLimit(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-12">
+                  <div className="form-check">
+                    <input
+                      className="form-check-input"
+                      type="checkbox"
+                      id="symmetricSearchCheck"
+                      checked={isSymmetric}
+                      onChange={(e) => setIsSymmetric(e.target.checked)}
+                    />
+                    <label className="form-check-label" htmlFor="symmetricSearchCheck">
+                      Symmetric search window
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowSearchParamsModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {showModal && <div className="modal-backdrop fade show"></div>}
       {showFilterModal && <div className="modal-backdrop fade show"></div>}
+      {showSearchParamsModal && <div className="modal-backdrop fade show"></div>}
     </div>
   );
 }
