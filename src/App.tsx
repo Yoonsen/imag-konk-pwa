@@ -1,17 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
+import * as XLSX from 'xlsx';
 
 interface Metadata {
+  id: number;
   urn: string;
   title?: string;
   author?: string;
-  year?: string;
+  year?: number | string;
   category?: string;
 }
 
-interface Concordance {
-  conc: { [key: string]: string };
-  urn: { [key: string]: string };
+interface ConcordanceRow {
+  bookId: number;
+  pos: number;
+  frag: string;
+}
+
+interface ConcordanceResponse {
+  rows: ConcordanceRow[];
 }
 
 interface ModalData {
@@ -63,6 +70,8 @@ function App() {
   const [showModal, setShowModal] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
+  const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const timestamp = new Date().getTime();
@@ -99,7 +108,12 @@ function App() {
   }, []);
 
   const performSearch = async () => {
-    if (!query) {
+    const trimmedQuery = query.trim();
+    const words = trimmedQuery.split(/\s+/).filter(Boolean);
+    const wordA = words[0] || "";
+    const wordB = words.length === 2 ? words[1] : "";
+
+    if (!wordA) {
       alert("Please enter a search term");
       return;
     }
@@ -122,22 +136,37 @@ function App() {
         const authorMatch = selectedAuthors.length === 0 || 
           (item.author && selectedAuthors.includes(item.author));
         
-        const year = parseInt(item.year || '0');
+        const year = Number(item.year ?? 0);
         const yearMatch = year >= yearRange[0] && year <= yearRange[1];
         
         return categoryMatch && authorMatch && yearMatch;
       });
 
-      const urnsToUse = filteredMetadata.map(item => item.urn);
+      if (filteredMetadata.length === 0) {
+        setStatus("No documents match the selected filters.");
+        setResults(<p key="no-filter-results">No documents match the selected filters.</p>);
+        return;
+      }
+
+      const filterIds = filteredMetadata.map(item => item.id);
+      const useFilter = filterIds.length > 0 && filterIds.length < metadataArray.length;
+
       const concBody = {
-        urns: urnsToUse,
-        query: query,
-        limit: 1000,
+        wordA,
+        wordB,
         window: 20,
-        html_formatting: true
+        before: 5,
+        after: 5,
+        perBook: 3,
+        totalLimit: 200,
+        schema: "unigrams",
+        useFilter,
+        filterIds: useFilter ? filterIds : [],
+        symmetric: true,
+        excludeSelf: false
       };
 
-      const concResp = await fetch("https://api.nb.no/dhlab/conc", {
+      const concResp = await fetch("https://api.nb.no/dhlab/imag/concordance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(concBody)
@@ -148,7 +177,7 @@ function App() {
         throw new Error(`HTTP error ${concResp.status}: ${errorText}`);
       }
 
-      const conc: Concordance = await concResp.json();
+      const conc: ConcordanceResponse = await concResp.json();
       const categoryText = selectedCategories.includes('All Categories') 
         ? '' 
         : ` in categories: ${selectedCategories.join(', ')}`;
@@ -158,31 +187,30 @@ function App() {
       const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
         ? ''
         : ` from ${yearRange[0]} to ${yearRange[1]}`;
-      setStatus(`Found ${Object.keys(conc.conc).length} results for "${query}"${categoryText}${authorText}${yearText}`);
+      const rows = Array.isArray(conc.rows) ? conc.rows : [];
+      setStatus(`Found ${rows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText}`);
+      setLastConcordanceRows(rows);
 
-      if (!conc.conc || Object.keys(conc.conc).length === 0) {
+      if (rows.length === 0) {
         setResults(<p key="no-results">No results found for this query.</p>);
         return;
       }
 
-      const newResults = Object.keys(conc.conc).map((key, index) => {
-        const text = conc.conc[key];
-        const urn = conc.urn[key];
-        const metadata = metadataArray.find(item => item.urn === urn);
-
-        const boldTerms = Array.from(text.matchAll(/<b>(.*?)<\/b>/g)).map(match => match[1]);
-        const searchText = boldTerms.join(" ");
-        const tokenCount = boldTerms.length;
-        const urnLink = `https://www.nb.no/items/${urn}?searchText="${encodeURIComponent(searchText)}"~${tokenCount}`;
+      const newResults = rows.map((row, index) => {
+        const text = row.frag;
+        const metadata = metadataArray.find(item => item.id === row.bookId);
+        const urnLink = metadata?.urn
+          ? `https://www.nb.no/items/${metadata.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~1`
+          : "#";
 
         return (
           <div 
             key={index} 
             className="concordance"
-            data-urn={urn}
-            onClick={() => handleConcordanceClick(metadata, urnLink)}
+            data-book-id={row.bookId}
+            onClick={() => metadata && handleConcordanceClick(metadata, urnLink)}
           >
-            <p dangerouslySetInnerHTML={{ __html: text }} />
+            <p>{text}</p>
           </div>
         );
       });
@@ -191,9 +219,120 @@ function App() {
     } catch (error) {
       setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setResults(<p key="error" className="error">Search failed: {error instanceof Error ? error.message : 'Unknown error'}</p>);
+      setLastConcordanceRows([]);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleCorpusUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleCorpusFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        throw new Error('No sheets found in workbook.');
+      }
+
+      const sheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+      const parsedMetadata = rows
+        .map((row) => {
+          const lowerCasedRow = Object.fromEntries(
+            Object.entries(row).map(([key, value]) => [key.toLowerCase().trim(), value])
+          );
+
+          const rawId = lowerCasedRow.id ?? lowerCasedRow.dhlabid ?? lowerCasedRow.bookid;
+          const rawUrn = lowerCasedRow.urn;
+
+          const id = Number(rawId);
+          const urn = String(rawUrn ?? '').trim();
+          const yearValue = lowerCasedRow.year;
+
+          return {
+            id,
+            urn,
+            title: String(lowerCasedRow.title ?? '').trim() || undefined,
+            author: String(lowerCasedRow.author ?? '').trim() || undefined,
+            category: String(lowerCasedRow.category ?? '').trim() || undefined,
+            year: yearValue === '' ? undefined : (yearValue as number | string)
+          } as Metadata;
+        })
+        .filter((item) => Number.isFinite(item.id) && item.urn.length > 0);
+
+      if (parsedMetadata.length === 0) {
+        throw new Error('No valid corpus rows found. Expected columns like id/dhlabid, urn, title, author, category, year.');
+      }
+
+      const authors = Array.from(
+        new Set(
+          parsedMetadata
+            .map((item) => item.author)
+            .filter((author): author is string => !!author)
+        )
+      ).sort();
+
+      setMetadataArray(parsedMetadata);
+      setUniqueAuthors(authors);
+      setSelectedAuthors([]);
+      setSelectedCategories(['All Categories']);
+      setStatus(`Loaded metadata for ${parsedMetadata.length} documents from "${file.name}".`);
+    } catch (error) {
+      setStatus(`Error loading corpus file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
+  const handleDownloadConcordance = () => {
+    if (lastConcordanceRows.length === 0) {
+      alert('No concordance results to download yet.');
+      return;
+    }
+
+    const escapeCsv = (value: string | number | undefined) => {
+      const safeValue = String(value ?? '');
+      if (safeValue.includes('"') || safeValue.includes(',') || safeValue.includes('\n')) {
+        return `"${safeValue.replace(/"/g, '""')}"`;
+      }
+      return safeValue;
+    };
+
+    const header = ['bookId', 'pos', 'frag', 'urn', 'title', 'author', 'year', 'category'];
+    const rows = lastConcordanceRows.map((row) => {
+      const metadata = metadataArray.find((item) => item.id === row.bookId);
+      return [
+        row.bookId,
+        row.pos,
+        row.frag,
+        metadata?.urn ?? '',
+        metadata?.title ?? '',
+        metadata?.author ?? '',
+        metadata?.year ?? '',
+        metadata?.category ?? ''
+      ].map(escapeCsv).join(',');
+    });
+
+    const csv = [header.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `concordance-${dateStamp}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const handleConcordanceClick = (metadata: Metadata | undefined, link: string) => {
@@ -201,7 +340,7 @@ function App() {
       setModalData({
         title: metadata.title || "Unknown Title",
         author: metadata.author || "Unknown Author",
-        year: metadata.year || "Unknown Year",
+        year: metadata.year !== undefined ? String(metadata.year) : "Unknown Year",
         category: metadata.category || "Unknown Category",
         link: link
       });
@@ -274,6 +413,14 @@ function App() {
             >
               <i className="bi bi-funnel"></i>
             </button>
+            <button
+              className="btn btn-outline-secondary"
+              type="button"
+              onClick={handleCorpusUploadClick}
+              title="Upload corpus Excel file"
+            >
+              <i className="bi bi-file-earmark-arrow-up"></i>
+            </button>
             <button 
               className="btn btn-primary"
               onClick={performSearch}
@@ -285,7 +432,23 @@ function App() {
                 'Search'
               )}
             </button>
+            <button
+              className="btn btn-outline-secondary"
+              type="button"
+              onClick={handleDownloadConcordance}
+              title="Download concordance"
+              disabled={lastConcordanceRows.length === 0}
+            >
+              <i className="bi bi-download"></i>
+            </button>
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls,.csv"
+            style={{ display: 'none' }}
+            onChange={handleCorpusFileChange}
+          />
         </div>
       </div>
 

@@ -40,9 +40,12 @@ fetch(jsonUrl)
 // Search function
 async function performSearch() {
   try {
-    const query = queryInput.value;
+    const query = queryInput.value.trim();
+    const words = query.split(/\s+/).filter(Boolean);
+    const wordA = words[0] || "";
+    const wordB = words.length === 2 ? words[1] : "";
 
-    if (!query) {
+    if (!wordA) {
       alert("Please enter a search term");
       return;
     }
@@ -67,20 +70,27 @@ async function performSearch() {
     `;
     resultsDiv.appendChild(spinner);
 
-    // Extract the list of URNs from the metadata
-    const urnsToUse = metadataArray.map(item => item.urn);
+    // Build filter IDs from loaded metadata
+    const filterIds = metadataArray.map(item => item.id).filter(Boolean);
 
     const concBody = {
-      urns: urnsToUse, // Send URNs instead of dhlabids
-      query: query,
-      limit: 1000,
+      wordA,
+      wordB,
       window: 20,
-      html_formatting: true
+      before: 5,
+      after: 5,
+      perBook: 3,
+      totalLimit: 200,
+      schema: "unigrams",
+      useFilter: filterIds.length > 0,
+      filterIds,
+      symmetric: true,
+      excludeSelf: false
     };
 
     console.log("Request body:", concBody);
 
-    const concResp = await fetch("https://api.nb.no/dhlab/conc", {
+    const concResp = await fetch("https://api.nb.no/dhlab/imag/concordance", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(concBody)
@@ -98,7 +108,7 @@ async function performSearch() {
 
     statusDiv.textContent = `Found results for "${query}"`;
 
-    if (!conc.conc || Object.keys(conc.conc).length === 0) {
+    if (!conc.rows || conc.rows.length === 0) {
       resultsDiv.innerHTML = "<p>No results found for this query.</p>";
       return;
     }
@@ -122,29 +132,28 @@ function renderConcordances(conc) {
 
   let matchCount = 0;
 
-  Object.keys(conc.conc).forEach(key => {
-    let text = conc.conc[key];
-    const urn = conc.urn[key]; // Use URN directly
-    const metadata = metadataArray.find(item => item.urn === urn); // Match metadata by URN
-
-    // Collect all terms inside <b> elements
-    const boldTerms = Array.from(text.matchAll(/<b>(.*?)<\/b>/g)).map(match => match[1]);
-    const searchText = boldTerms.join(" ");
-    const tokenCount = boldTerms.length; // Number of tokens
+  conc.rows.forEach(row => {
+    const text = row.frag;
+    const metadata = metadataArray.find(item => item.id === row.bookId);
+    const urn = metadata?.urn;
 
     // Construct the clickable URL with searchText
-    const urnLink = `https://www.nb.no/items/${urn}?searchText="${encodeURIComponent(searchText)}"~${tokenCount}`;
+    const urnLink = urn
+      ? `https://www.nb.no/items/${urn}?searchText="${encodeURIComponent(queryInput.value.trim())}"~1`
+      : null;
 
     // Create the concordance line
     const div = document.createElement("div");
     div.className = "concordance";
-    div.setAttribute("data-urn", urn); // Attach URN for hover functionality
+    div.setAttribute("data-book-id", String(row.bookId)); // Attach book ID for hover functionality
     div.innerHTML = `<p>${text}</p>`;
 
     // Add click event to the concordance line
     div.addEventListener("click", () => {
-      console.log(`Concordance clicked: ${urn}`);
-      window.open(urnLink, "_blank"); // Open the library page in a new tab
+      if (urnLink) {
+        console.log(`Concordance clicked: ${row.bookId}`);
+        window.open(urnLink, "_blank"); // Open the library page in a new tab
+      }
     });
 
     // Add hover functionality for metadata pop-up
