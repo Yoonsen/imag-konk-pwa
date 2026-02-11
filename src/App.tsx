@@ -210,8 +210,9 @@ function App() {
       const newResults = rows.map((row, index) => {
         const text = row.frag;
         const metadata = metadataArray.find(item => item.id === row.bookId);
+        const nbProximity = Math.max(normalizedBefore, normalizedAfter);
         const urnLink = metadata?.urn
-          ? `https://www.nb.no/items/${metadata.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~1`
+          ? `https://www.nb.no/items/${metadata.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${nbProximity}`
           : "#";
 
         return (
