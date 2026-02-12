@@ -26,6 +26,7 @@ interface ModalData {
   author: string;
   year: string;
   category: string;
+  dhlabid: string;
   link: string;
 }
 
@@ -77,6 +78,12 @@ function App() {
   const [showSearchParamsModal, setShowSearchParamsModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
+  const [debugEnabled, setDebugEnabled] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('imagDebugMode') === 'true';
+  });
+  const [debugRequest, setDebugRequest] = useState<Record<string, unknown> | null>(null);
+  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -113,11 +120,29 @@ function App() {
       });
   }, []);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('imagDebugMode', String(debugEnabled));
+    }
+  }, [debugEnabled]);
+
   const performSearch = async () => {
     const trimmedQuery = query.trim();
     const words = trimmedQuery.split(/\s+/).filter(Boolean);
     const wordA = words[0] || "";
     const wordB = words.length === 2 ? words[1] : "";
+
+    if (/^:debug\s+on$/i.test(trimmedQuery)) {
+      setDebugEnabled(true);
+      setStatus("Debug mode enabled.");
+      return;
+    }
+
+    if (/^:debug\s+off$/i.test(trimmedQuery)) {
+      setDebugEnabled(false);
+      setStatus("Debug mode disabled.");
+      return;
+    }
 
     if (!wordA) {
       alert("Please enter a search term");
@@ -176,6 +201,7 @@ function App() {
         symmetric: isSymmetric,
         excludeSelf: false
       };
+      setDebugRequest(concBody);
 
       const concResp = await fetch("https://api.nb.no/dhlab/imag/concordance", {
         method: "POST",
@@ -201,6 +227,19 @@ function App() {
       const rows = Array.isArray(conc.rows) ? conc.rows : [];
       setStatus(`Found ${rows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText}`);
       setLastConcordanceRows(rows);
+      const debugPreviewMeta = rows.length > 0
+        ? metadataArray.find(item => item.id === rows[0].bookId)
+        : undefined;
+      const debugPreviewLink = debugPreviewMeta?.urn
+        ? `https://www.nb.no/items/${debugPreviewMeta.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${normalizedWindow}`
+        : null;
+      setDebugInfo({
+        rows: rows.length,
+        filteredDocs: filteredMetadata.length,
+        useFilter,
+        filterIdsCount: useFilter ? filterIds.length : 0,
+        nbPreviewLink: debugPreviewLink
+      });
 
       if (rows.length === 0) {
         setResults(<p key="no-results">No results found for this query.</p>);
@@ -222,6 +261,9 @@ function App() {
             data-book-id={row.bookId}
             onClick={() => metadata && handleConcordanceClick(metadata, urnLink)}
           >
+            <div className="text-muted" style={{ fontSize: "11px" }}>
+              dhlabid: {row.bookId}
+            </div>
             <p>{text}</p>
           </div>
         );
@@ -232,6 +274,9 @@ function App() {
       setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setResults(<p key="error" className="error">Search failed: {error instanceof Error ? error.message : 'Unknown error'}</p>);
       setLastConcordanceRows([]);
+      setDebugInfo({
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     } finally {
       setIsLoading(false);
     }
@@ -313,7 +358,7 @@ function App() {
     const rows = lastConcordanceRows.map((row) => {
       const metadata = metadataArray.find((item) => item.id === row.bookId);
       return {
-        bookId: row.bookId,
+        dhlabid: row.bookId,
         pos: row.pos,
         frag: row.frag,
         urn: metadata?.urn ?? '',
@@ -338,6 +383,7 @@ function App() {
         author: metadata.author || "Unknown Author",
         year: metadata.year !== undefined ? String(metadata.year) : "Unknown Year",
         category: metadata.category || "Unknown Category",
+        dhlabid: String(metadata.id),
         link: link
       });
       setShowModal(true);
@@ -426,6 +472,14 @@ function App() {
             >
               <i className="bi bi-sliders"></i>
             </button>
+            <button
+              className={`btn ${debugEnabled ? 'btn-warning' : 'btn-outline-secondary'}`}
+              type="button"
+              onClick={() => setDebugEnabled(!debugEnabled)}
+              title="Toggle debug mode"
+            >
+              <i className="bi bi-bug"></i>
+            </button>
             <button 
               className="btn btn-primary"
               onClick={performSearch}
@@ -461,6 +515,36 @@ function App() {
 
       <div className="border p-3" style={{ overflowY: "auto", height: "calc(100vh - 200px)" }}>
         <div style={{ fontSize: "12px", marginBottom: "10px", color: "#555" }}>{status}</div>
+        {debugEnabled && (
+          <div className="accordion mb-3" id="debugAccordion">
+            <div className="accordion-item">
+              <h2 className="accordion-header" id="debugHeading">
+                <button
+                  className="accordion-button collapsed py-2"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#debugCollapse"
+                  aria-expanded="false"
+                  aria-controls="debugCollapse"
+                >
+                  Debug
+                </button>
+              </h2>
+              <div
+                id="debugCollapse"
+                className="accordion-collapse collapse"
+                aria-labelledby="debugHeading"
+                data-bs-parent="#debugAccordion"
+              >
+                <div className="accordion-body py-2 px-3" style={{ fontSize: "12px" }}>
+                  <pre style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>
+                    {JSON.stringify({ request: debugRequest, info: debugInfo }, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {results}
       </div>
 
@@ -484,6 +568,7 @@ function App() {
               <p><strong>Author:</strong> {modalData?.author}</p>
               <p><strong>Year:</strong> {modalData?.year}</p>
               <p><strong>Category:</strong> {modalData?.category}</p>
+              <p><strong>dhlabid:</strong> {modalData?.dhlabid}</p>
             </div>
             <div className="modal-footer">
               <a 
