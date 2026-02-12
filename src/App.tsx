@@ -264,9 +264,11 @@ function App() {
             data-book-id={row.bookId}
             onClick={() => metadata && handleConcordanceClick(metadata, urnLink)}
           >
-            <div className="text-muted" style={{ fontSize: "11px" }}>
-              dhlabid: {row.bookId}
-            </div>
+            {debugEnabled && (
+              <div className="text-muted" style={{ fontSize: "11px" }}>
+                dhlabid: {row.bookId}
+              </div>
+            )}
             <p>{text}</p>
           </div>
         );
