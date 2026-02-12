@@ -201,7 +201,10 @@ function App() {
         symmetric: isSymmetric,
         excludeSelf: false
       };
-      setDebugRequest(concBody);
+      setDebugRequest({
+        ...concBody,
+        filterIds: `[${useFilter ? filterIds.length : 0} ids]`
+      });
 
       const concResp = await fetch("https://api.nb.no/dhlab/imag/concordance", {
         method: "POST",
