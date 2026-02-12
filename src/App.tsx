@@ -69,6 +69,7 @@ function App() {
   const [afterWindow, setAfterWindow] = useState<number>(5);
   const [perBook, setPerBook] = useState<number>(3);
   const [totalLimit, setTotalLimit] = useState<number>(200);
+  const [maxVariants, setMaxVariants] = useState<number>(10);
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<React.ReactNode>(null);
@@ -185,31 +186,51 @@ function App() {
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
       const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
+      const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const normalizedWindow = Math.max(normalizedBefore, normalizedAfter);
+      const usesNearFragments = words.length > 2 || words.some((term) => term.includes('*'));
 
-      const concBody = {
-        wordA,
-        wordB,
-        window: normalizedWindow,
-        before: normalizedBefore,
-        after: normalizedAfter,
-        perBook: normalizedPerBook,
-        totalLimit: normalizedTotalLimit,
-        schema: "unigrams",
-        useFilter,
-        filterIds: useFilter ? filterIds : [],
-        symmetric: isSymmetric,
-        excludeSelf: false
-      };
+      const endpointPath = usesNearFragments ? "near_fragments" : "concordance";
+      const requestBody = usesNearFragments
+        ? {
+            terms: words,
+            window: normalizedWindow,
+            before: normalizedBefore,
+            after: normalizedAfter,
+            perBook: normalizedPerBook,
+            totalLimit: normalizedTotalLimit,
+            schema: "unigrams",
+            symmetric: isSymmetric,
+            excludeSelf: false,
+            useFilter,
+            filterIds: useFilter ? filterIds : [],
+            maxVariants: normalizedMaxVariants
+          }
+        : {
+            wordA,
+            wordB,
+            window: normalizedWindow,
+            before: normalizedBefore,
+            after: normalizedAfter,
+            perBook: normalizedPerBook,
+            totalLimit: normalizedTotalLimit,
+            schema: "unigrams",
+            useFilter,
+            filterIds: useFilter ? filterIds : [],
+            symmetric: isSymmetric,
+            excludeSelf: false
+          };
+
       setDebugRequest({
-        ...concBody,
+        endpoint: endpointPath,
+        ...requestBody,
         filterIds: `[${useFilter ? filterIds.length : 0} ids]`
       });
 
-      const concResp = await fetch("https://api.nb.no/dhlab/imag/concordance", {
+      const concResp = await fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(concBody)
+        body: JSON.stringify(requestBody)
       });
 
       if (!concResp.ok) {
@@ -237,6 +258,8 @@ function App() {
         ? `https://www.nb.no/items/${debugPreviewMeta.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${normalizedWindow}`
         : null;
       setDebugInfo({
+        endpoint: endpointPath,
+        queryMode: usesNearFragments ? "near_fragments" : "concordance",
         rows: rows.length,
         filteredDocs: filteredMetadata.length,
         useFilter,
@@ -777,6 +800,17 @@ function App() {
                     step={1}
                     value={totalLimit}
                     onChange={(e) => setTotalLimit(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">Max variants (*)</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={1}
+                    step={1}
+                    value={maxVariants}
+                    onChange={(e) => setMaxVariants(Number(e.target.value))}
                   />
                 </div>
                 <div className="col-12">
