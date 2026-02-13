@@ -584,8 +584,8 @@ function App() {
       <h1 className="text-center mb-4">ImagiNation Concordances</h1>
       <div className="row justify-content-center mb-3">
         <div className="col-md-8">
-          <div className="d-flex flex-wrap align-items-start gap-2">
-            <div className="input-group flex-grow-1" style={{ minWidth: "280px" }}>
+          <div className="d-flex flex-wrap flex-md-nowrap align-items-start gap-1">
+            <div className="input-group flex-grow-1" style={{ minWidth: "200px" }}>
               <button
                 className="btn btn-primary"
                 type="button"
@@ -605,7 +605,7 @@ function App() {
               />
             </div>
 
-            <div className="d-flex flex-wrap align-items-start gap-2">
+            <div className="d-flex flex-wrap flex-md-nowrap align-items-start gap-1">
               <div className="btn-group" role="group" aria-label="Korpus actions">
                 <button 
                   className="btn btn-outline-secondary"
