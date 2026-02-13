@@ -584,76 +584,85 @@ function App() {
       <h1 className="text-center mb-4">ImagiNation Concordances</h1>
       <div className="row justify-content-center mb-3">
         <div className="col-md-8">
-          <div className="input-group">
-            <input
-              type="text"
-              className="form-control"
-              placeholder="e.g. Norge"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && performSearch()}
-            />
-            <button 
-              className="btn btn-outline-secondary"
-              type="button"
-              onClick={() => setShowFilterModal(true)}
-              title="Korpusfiltrering"
-            >
-              <i className="bi bi-tools"></i>
-            </button>
-            <button
-              className="btn btn-outline-secondary"
-              type="button"
-              onClick={handleCorpusUploadClick}
-              title="Upload corpus Excel file"
-            >
-              <i className="bi bi-file-earmark-spreadsheet"></i>
-            </button>
-            <button
-              className="btn btn-outline-secondary"
-              type="button"
-              onClick={() => setShowSearchParamsModal(true)}
-              title="Sokeparametre"
-            >
-              <i className="bi bi-sliders"></i>
-            </button>
-            <button
-              className={`btn ${debugEnabled ? 'btn-warning' : 'btn-outline-secondary'}`}
-              type="button"
-              onClick={() => setDebugEnabled(!debugEnabled)}
-              title="Toggle debug mode"
-            >
-              <i className="bi bi-bug"></i>
-            </button>
-            <button
-              className="btn btn-outline-secondary"
-              type="button"
-              onClick={() => setShowHelpModal(true)}
-              title="Hjelp"
-            >
-              <i className="bi bi-question-circle"></i>
-            </button>
-            <button 
-              className="btn btn-primary"
-              onClick={performSearch}
-              disabled={isLoading}
-            >
-              {isLoading ? (
-                <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-              ) : (
-                'Search'
-              )}
-            </button>
-            <div className="ms-2">
+          <div className="d-flex flex-wrap align-items-start gap-2">
+            <div className="input-group flex-grow-1" style={{ minWidth: "280px" }}>
               <button
-                className="btn btn-outline-secondary"
+                className="btn btn-primary"
                 type="button"
-                onClick={handleDownloadConcordance}
-                title="Download concordance (.xlsx)"
-                disabled={lastConcordanceRows.length === 0}
+                onClick={performSearch}
+                disabled={isLoading}
+                title="Search"
               >
-                <i className="bi bi-download"></i>
+                <i className="bi bi-search"></i>
               </button>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="e.g. Norge"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && performSearch()}
+              />
+            </div>
+
+            <div className="d-flex flex-wrap align-items-start gap-2">
+              <div className="btn-group" role="group" aria-label="Korpus actions">
+                <button 
+                  className="btn btn-outline-secondary"
+                  type="button"
+                  onClick={() => setShowFilterModal(true)}
+                  title="Korpusfiltrering"
+                >
+                  <i className="bi bi-tools"></i>
+                </button>
+                <button
+                  className="btn btn-outline-secondary"
+                  type="button"
+                  onClick={handleCorpusUploadClick}
+                  title="Upload corpus Excel file"
+                >
+                  <i className="bi bi-file-earmark-spreadsheet"></i>
+                </button>
+                <button
+                  className="btn btn-outline-secondary"
+                  type="button"
+                  onClick={() => setShowSearchParamsModal(true)}
+                  title="Sokeparametre"
+                >
+                  <i className="bi bi-sliders"></i>
+                </button>
+              </div>
+
+              <div className="btn-group" role="group" aria-label="Debug and help">
+                <button
+                  className={`btn ${debugEnabled ? 'btn-warning' : 'btn-outline-secondary'}`}
+                  type="button"
+                  onClick={() => setDebugEnabled(!debugEnabled)}
+                  title="Toggle debug mode"
+                >
+                  <i className="bi bi-bug"></i>
+                </button>
+                <button
+                  className="btn btn-outline-secondary"
+                  type="button"
+                  onClick={() => setShowHelpModal(true)}
+                  title="Hjelp"
+                >
+                  <i className="bi bi-question-circle"></i>
+                </button>
+              </div>
+
+              <div className="btn-group" role="group" aria-label="Download actions">
+                <button
+                  className="btn btn-outline-secondary"
+                  type="button"
+                  onClick={handleDownloadConcordance}
+                  title="Download concordance (.xlsx)"
+                  disabled={lastConcordanceRows.length === 0}
+                >
+                  <i className="bi bi-download"></i>
+                </button>
+              </div>
             </div>
           </div>
           <input
