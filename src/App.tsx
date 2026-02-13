@@ -68,8 +68,10 @@ function App() {
   const [beforeWindow, setBeforeWindow] = useState<number>(5);
   const [afterWindow, setAfterWindow] = useState<number>(5);
   const [perBook, setPerBook] = useState<number>(3);
+  const [docSamples, setDocSamples] = useState<number>(10);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
+  const [termGroupsInput, setTermGroupsInput] = useState<string>('');
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<React.ReactNode>(null);
@@ -77,6 +79,7 @@ function App() {
   const [showModal, setShowModal] = useState(false);
   const [showFilterModal, setShowFilterModal] = useState(false);
   const [showSearchParamsModal, setShowSearchParamsModal] = useState(false);
+  const [showHelpModal, setShowHelpModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
   const [debugEnabled, setDebugEnabled] = useState<boolean>(() => {
@@ -86,6 +89,62 @@ function App() {
   const [debugRequest, setDebugRequest] = useState<Record<string, unknown> | null>(null);
   const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const parseTermGroups = (rawInput: string): string[][] | null => {
+    const trimmed = rawInput.trim();
+    if (!trimmed) return null;
+
+    // 1) Strict JSON mode: [["a","b"],["c"]]
+    if (trimmed.startsWith('[[')) {
+      const parsed = JSON.parse(trimmed);
+      const isValid =
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        parsed.every((group) =>
+          Array.isArray(group) &&
+          group.length > 0 &&
+          group.every((term) => typeof term === 'string' && term.trim().length > 0)
+        );
+
+      if (!isValid) {
+        throw new Error('termGroups must be JSON like [["a","b"],["c"]].');
+      }
+
+      return parsed.map((group: string[]) => group.map((term) => term.trim()));
+    }
+
+    // 2) Relaxed mode: [spise, spiste] middag -> [["spise","spiste"],["middag"]]
+    const groups: string[][] = [];
+    const bracketRegex = /\[([^\]]+)\]/g;
+    let match: RegExpExecArray | null;
+    let consumed = '';
+
+    while ((match = bracketRegex.exec(trimmed)) !== null) {
+      const inside = match[1];
+      const terms = inside
+        .split(',')
+        .map((term) => term.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean);
+      if (terms.length > 0) groups.push(terms);
+      consumed += match[0];
+    }
+
+    // Remove bracket groups and tokenize remaining text into single-term groups.
+    const leftover = trimmed.replace(bracketRegex, ' ').trim();
+    if (leftover) {
+      const singles = leftover
+        .split(/\s+/)
+        .map((term) => term.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean);
+      singles.forEach((term) => groups.push([term]));
+    }
+
+    if (groups.length === 0) {
+      throw new Error('No valid term groups found.');
+    }
+
+    return groups;
+  };
 
   useEffect(() => {
     const timestamp = new Date().getTime();
@@ -132,6 +191,18 @@ function App() {
     const words = trimmedQuery.split(/\s+/).filter(Boolean);
     const wordA = words[0] || "";
     const wordB = words.length === 2 ? words[1] : "";
+    let parsedTermGroups: string[][] | null = null;
+    const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
+
+    if (termGroupsSource) {
+      try {
+        parsedTermGroups = parseTermGroups(termGroupsSource);
+      } catch (error) {
+        setStatus(`Invalid termGroups JSON: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setResults(<p key="term-groups-error" className="error">Invalid termGroups JSON format.</p>);
+        return;
+      }
+    }
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -145,7 +216,7 @@ function App() {
       return;
     }
 
-    if (!wordA) {
+    if (!wordA && !parsedTermGroups) {
       alert("Please enter a search term");
       return;
     }
@@ -185,26 +256,39 @@ function App() {
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
       const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
+      const normalizedDocSamples = Math.max(1, Math.floor(docSamples) || 1);
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const normalizedWindow = Math.max(normalizedBefore, normalizedAfter);
-      const usesNearFragments = words.length > 2 || words.some((term) => term.includes('*'));
+      const hasWildcard = words.some((term) => term.includes('*'));
+      const usesNearFragments = !!parsedTermGroups || (words.length >= 2 && (words.length > 2 || hasWildcard));
+      const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
+
+      // Fast profile for inline term-groups to keep latency low during interactive searching.
+      const effectivePerBook = usesInlineTermGroups ? Math.min(normalizedPerBook, 2) : normalizedPerBook;
+      const effectiveDocSamples = usesInlineTermGroups ? Math.min(normalizedDocSamples, 10) : normalizedDocSamples;
+      const effectiveTotalLimit = usesInlineTermGroups ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
+      const effectiveMaxVariants = usesInlineTermGroups ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
 
       const endpointPath = usesNearFragments ? "near_fragments" : "concordance";
       const requestBody = usesNearFragments
         ? {
-            terms: words,
+            ...(parsedTermGroups
+              ? { termGroups: parsedTermGroups, terms: [] }
+              : { terms: words }),
             window: normalizedWindow,
             before: normalizedBefore,
             after: normalizedAfter,
-            perBook: normalizedPerBook,
-            totalLimit: normalizedTotalLimit,
+            perBook: effectivePerBook,
+            docSamples: effectiveDocSamples,
+            doc_samples: effectiveDocSamples,
+            totalLimit: effectiveTotalLimit,
             schema: "unigrams",
             symmetric: isSymmetric,
             excludeSelf: false,
             useFilter,
             filterIds: useFilter ? filterIds : [],
-            maxVariants: normalizedMaxVariants
+            maxVariants: effectiveMaxVariants
           }
         : {
             wordA,
@@ -212,8 +296,10 @@ function App() {
             window: normalizedWindow,
             before: normalizedBefore,
             after: normalizedAfter,
-            perBook: normalizedPerBook,
-            totalLimit: normalizedTotalLimit,
+            perBook: effectivePerBook,
+            docSamples: effectiveDocSamples,
+            doc_samples: effectiveDocSamples,
+            totalLimit: effectiveTotalLimit,
             schema: "unigrams",
             useFilter,
             filterIds: useFilter ? filterIds : [],
@@ -235,6 +321,27 @@ function App() {
 
       if (!concResp.ok) {
         const errorText = await concResp.text();
+        if (concResp.status === 404) {
+          const categoryText = selectedCategories.includes('All Categories')
+            ? ''
+            : ` in categories: ${selectedCategories.join(', ')}`;
+          const authorText = selectedAuthors.length > 0
+            ? ` by authors: ${selectedAuthors.join(', ')}`
+            : '';
+          const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+            ? ''
+            : ` from ${yearRange[0]} to ${yearRange[1]}`;
+          setStatus(`No results for "${trimmedQuery}"${categoryText}${authorText}${yearText}`);
+          setResults(<p key="no-results">No results found for this query.</p>);
+          setLastConcordanceRows([]);
+          setDebugInfo({
+            endpoint: endpointPath,
+            queryMode: usesNearFragments ? "near_fragments" : "concordance",
+            httpStatus: 404,
+            backendMessage: errorText
+          });
+          return;
+        }
         throw new Error(`HTTP error ${concResp.status}: ${errorText}`);
       }
 
@@ -249,7 +356,12 @@ function App() {
         ? ''
         : ` from ${yearRange[0]} to ${yearRange[1]}`;
       const rows = Array.isArray(conc.rows) ? conc.rows : [];
-      setStatus(`Found ${rows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText}`);
+      const sampledDocs = new Set(rows.map((row) => row.bookId)).size;
+      const expectedSampleCap = effectiveDocSamples * effectivePerBook;
+      setStatus(
+        `Found ${rows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
+        `(sampled docs: ${sampledDocs}, cap: ${expectedSampleCap})`
+      );
       setLastConcordanceRows(rows);
       const debugPreviewMeta = rows.length > 0
         ? metadataArray.find(item => item.id === rows[0].bookId)
@@ -261,6 +373,11 @@ function App() {
         endpoint: endpointPath,
         queryMode: usesNearFragments ? "near_fragments" : "concordance",
         rows: rows.length,
+        sampledDocs,
+        expectedSampleCap,
+        perBook: effectivePerBook,
+        doc_samples: effectiveDocSamples,
+        fastProfileApplied: usesInlineTermGroups,
         filteredDocs: filteredMetadata.length,
         useFilter,
         filterIdsCount: useFilter ? filterIds.length : 0,
@@ -507,6 +624,14 @@ function App() {
               title="Toggle debug mode"
             >
               <i className="bi bi-bug"></i>
+            </button>
+            <button
+              className="btn btn-outline-secondary"
+              type="button"
+              onClick={() => setShowHelpModal(true)}
+              title="Hjelp"
+            >
+              <i className="bi bi-question-circle"></i>
             </button>
             <button 
               className="btn btn-primary"
@@ -792,6 +917,17 @@ function App() {
                   />
                 </div>
                 <div className="col-md-6">
+                  <label className="form-label">doc_samples (fallback)</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={1}
+                    step={1}
+                    value={docSamples}
+                    onChange={(e) => setDocSamples(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-md-6">
                   <label className="form-label">Maks visning (cutoff)</label>
                   <input
                     type="number"
@@ -811,6 +947,16 @@ function App() {
                     step={1}
                     value={maxVariants}
                     onChange={(e) => setMaxVariants(Number(e.target.value))}
+                  />
+                </div>
+                <div className="col-12">
+                  <label className="form-label">Term groups JSON (optional)</label>
+                  <textarea
+                    className="form-control"
+                    rows={2}
+                    placeholder='[["spise","spiser","spiste"],["middag"]] or [spise, spiste] middag'
+                    value={termGroupsInput}
+                    onChange={(e) => setTermGroupsInput(e.target.value)}
                   />
                 </div>
                 <div className="col-12">
@@ -842,9 +988,47 @@ function App() {
         </div>
       </div>
 
+      {/* Help Modal */}
+      <div className={`modal fade ${showHelpModal ? 'show' : ''}`}
+           style={{ display: showHelpModal ? 'block' : 'none' }}
+           tabIndex={-1}
+           role="dialog">
+        <div className="modal-dialog" role="document">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">Sokehjelp</h5>
+              <button
+                type="button"
+                className="btn-close"
+                onClick={() => setShowHelpModal(false)}
+                aria-label="Close"
+              ></button>
+            </div>
+            <div className="modal-body">
+              <p><strong>Vanlig sok:</strong> ett eller to ord, f.eks. <code>elskov kjærlighed</code>.</p>
+              <p><strong>Wildcard:</strong> bruk <code>*</code>, f.eks. <code>elskov*</code>.</p>
+              <p><strong>Termgrupper:</strong> skriv i sokefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
+              <p><strong>Alternativ termgruppe-format:</strong> <code>[["spise","spiser"],["middag"]]</code>.</p>
+              <p><strong>Filtrering:</strong> bruk verktoy-ikonet for forfatter, kategori og ar.</p>
+              <p><strong>Sokeparametre:</strong> juster vindu/sampling med sliders-ikonet.</p>
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowHelpModal(false)}
+              >
+                Lukk
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {showModal && <div className="modal-backdrop fade show"></div>}
       {showFilterModal && <div className="modal-backdrop fade show"></div>}
       {showSearchParamsModal && <div className="modal-backdrop fade show"></div>}
+      {showHelpModal && <div className="modal-backdrop fade show"></div>}
     </div>
   );
 }
