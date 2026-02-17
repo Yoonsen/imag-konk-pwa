@@ -260,8 +260,8 @@ function App() {
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const normalizedWindow = Math.max(normalizedBefore, normalizedAfter);
-      const hasWildcard = words.some((term) => term.includes('*'));
-      const usesNearFragments = !!parsedTermGroups || (words.length >= 2 && (words.length > 2 || hasWildcard));
+      const usesOrQuery = !!parsedTermGroups && parsedTermGroups.length === 1;
+      const usesNearFragments = (!!parsedTermGroups && parsedTermGroups.length > 1) || words.length > 2;
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
 
       // Fast profile for inline term-groups to keep latency low during interactive searching.
@@ -270,18 +270,22 @@ function App() {
       const effectiveTotalLimit = usesInlineTermGroups ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
       const effectiveMaxVariants = usesInlineTermGroups ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
 
-      const endpointPath = usesNearFragments ? "near_fragments" : "concordance";
-      const requestBody = usesNearFragments
+      const endpointPath = usesOrQuery
+        ? "or_query"
+        : (usesNearFragments ? "near_fragments" : "concordance");
+
+      const concordanceBefore = Math.min(normalizedBefore, 25);
+      const concordanceAfter = Math.min(normalizedAfter, 25);
+      const requestBody = endpointPath === "near_fragments"
         ? {
             ...(parsedTermGroups
-              ? { termGroups: parsedTermGroups, terms: [] }
+              ? { termGroups: parsedTermGroups }
               : { terms: words }),
             window: normalizedWindow,
             before: normalizedBefore,
             after: normalizedAfter,
             perBook: effectivePerBook,
             docSamples: effectiveDocSamples,
-            doc_samples: effectiveDocSamples,
             totalLimit: effectiveTotalLimit,
             schema: "unigrams",
             symmetric: isSymmetric,
@@ -290,15 +294,27 @@ function App() {
             filterIds: useFilter ? filterIds : [],
             maxVariants: effectiveMaxVariants
           }
+        : endpointPath === "or_query"
+          ? {
+              termGroups: parsedTermGroups,
+              before: normalizedBefore,
+              after: normalizedAfter,
+              perBook: effectivePerBook,
+              docSamples: effectiveDocSamples,
+              totalLimit: effectiveTotalLimit,
+              schema: "unigrams",
+              useFilter,
+              filterIds: useFilter ? filterIds : [],
+              maxVariants: effectiveMaxVariants
+            }
         : {
             wordA,
             wordB,
             window: normalizedWindow,
-            before: normalizedBefore,
-            after: normalizedAfter,
+            before: concordanceBefore,
+            after: concordanceAfter,
             perBook: effectivePerBook,
             docSamples: effectiveDocSamples,
-            doc_samples: effectiveDocSamples,
             totalLimit: effectiveTotalLimit,
             schema: "unigrams",
             useFilter,
@@ -336,7 +352,7 @@ function App() {
           setLastConcordanceRows([]);
           setDebugInfo({
             endpoint: endpointPath,
-            queryMode: usesNearFragments ? "near_fragments" : "concordance",
+            queryMode: endpointPath,
             httpStatus: 404,
             backendMessage: errorText
           });
@@ -371,12 +387,12 @@ function App() {
         : null;
       setDebugInfo({
         endpoint: endpointPath,
-        queryMode: usesNearFragments ? "near_fragments" : "concordance",
+        queryMode: endpointPath,
         rows: rows.length,
         sampledDocs,
         expectedSampleCap,
         perBook: effectivePerBook,
-        doc_samples: effectiveDocSamples,
+        docSamples: effectiveDocSamples,
         fastProfileApplied: usesInlineTermGroups,
         filteredDocs: filteredMetadata.length,
         useFilter,
@@ -1018,6 +1034,7 @@ function App() {
               <p><strong>Wildcard:</strong> bruk <code>*</code>, f.eks. <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv i sokefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
               <p><strong>Alternativ termgruppe-format:</strong> <code>[["spise","spiser"],["middag"]]</code>.</p>
+              <p><strong>OR-gruppe:</strong> en gruppe som <code>[elskov, kjærlighed, forelskelse]</code> bruker OR-sok.</p>
               <p><strong>Filtrering:</strong> bruk verktoy-ikonet for forfatter, kategori og ar.</p>
               <p><strong>Sokeparametre:</strong> juster vindu/sampling med sliders-ikonet.</p>
             </div>
