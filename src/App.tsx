@@ -65,10 +65,10 @@ function App() {
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
   const [authorSearch, setAuthorSearch] = useState('');
   const [yearRange, setYearRange] = useState<[number, number]>([MIN_YEAR, MAX_YEAR]);
-  const [beforeWindow, setBeforeWindow] = useState<number>(5);
-  const [afterWindow, setAfterWindow] = useState<number>(5);
+  const [beforeWindow, setBeforeWindow] = useState<number>(15);
+  const [afterWindow, setAfterWindow] = useState<number>(15);
   const [perBook, setPerBook] = useState<number>(3);
-  const [docSamples, setDocSamples] = useState<number>(10);
+  const [docSamples, setDocSamples] = useState<number>(100);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
