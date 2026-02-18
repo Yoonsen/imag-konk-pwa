@@ -72,6 +72,8 @@ function App() {
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
+  const [nearEngine, setNearEngine] = useState<'python' | 'julia'>('python');
+  const [parallelShards, setParallelShards] = useState<boolean>(false);
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<React.ReactNode>(null);
@@ -292,7 +294,9 @@ function App() {
             excludeSelf: false,
             useFilter,
             filterIds: useFilter ? filterIds : [],
-            maxVariants: effectiveMaxVariants
+            maxVariants: effectiveMaxVariants,
+            engine: nearEngine,
+            parallelShards
           }
         : endpointPath === "or_query"
           ? {
@@ -974,6 +978,32 @@ function App() {
                     onChange={(e) => setMaxVariants(Number(e.target.value))}
                   />
                 </div>
+                <div className="col-md-6">
+                  <label className="form-label">Near engine</label>
+                  <select
+                    className="form-select"
+                    value={nearEngine}
+                    onChange={(e) => setNearEngine(e.target.value as 'python' | 'julia')}
+                  >
+                    <option value="python">python</option>
+                    <option value="julia">julia</option>
+                  </select>
+                </div>
+                <div className="col-md-6">
+                  <div className="form-check mt-4">
+                    <input
+                      className="form-check-input"
+                      type="checkbox"
+                      id="parallelShardsCheck"
+                      checked={parallelShards}
+                      onChange={(e) => setParallelShards(e.target.checked)}
+                      disabled={nearEngine !== 'julia'}
+                    />
+                    <label className="form-check-label" htmlFor="parallelShardsCheck">
+                      parallelShards (Julia)
+                    </label>
+                  </div>
+                </div>
                 <div className="col-12">
                   <label className="form-label">Term groups JSON (optional)</label>
                   <textarea
@@ -1035,6 +1065,7 @@ function App() {
               <p><strong>Termgrupper:</strong> skriv i sokefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
               <p><strong>Alternativ termgruppe-format:</strong> <code>[["spise","spiser"],["middag"]]</code>.</p>
               <p><strong>OR-gruppe:</strong> en gruppe som <code>[elskov, kjærlighed, forelskelse]</code> bruker OR-sok.</p>
+              <p><strong>Engine:</strong> Python/Julia velges i sokeparametre for near-kall.</p>
               <p><strong>Filtrering:</strong> bruk verktoy-ikonet for forfatter, kategori og ar.</p>
               <p><strong>Sokeparametre:</strong> juster vindu/sampling med sliders-ikonet.</p>
             </div>
