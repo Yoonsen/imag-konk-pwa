@@ -83,6 +83,7 @@ function App() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
+  const [persistentFilterIds, setPersistentFilterIds] = useState<number[] | null>(null);
   const [debugEnabled, setDebugEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return window.localStorage.getItem('imagDebugMode') === 'true';
@@ -170,6 +171,7 @@ function App() {
 
         if (sanitizedData && Array.isArray(sanitizedData.dhlabids)) {
           setMetadataArray(sanitizedData.dhlabids);
+          setPersistentFilterIds(null);
           // Extract unique authors
           const authors = Array.from(new Set(
             sanitizedData.dhlabids
@@ -269,7 +271,17 @@ function App() {
       }
 
       const filterIds = filteredMetadata.map(item => item.id);
-      const useFilter = filterIds.length > 0 && filterIds.length < metadataArray.length;
+      const hasFilterModalConstraints =
+        !selectedCategories.includes('All Categories') ||
+        selectedAuthors.length > 0 ||
+        yearRange[0] !== MIN_YEAR ||
+        yearRange[1] !== MAX_YEAR;
+      const effectiveFilterIds = persistentFilterIds
+        ? (hasFilterModalConstraints ? filterIds : persistentFilterIds)
+        : filterIds;
+      const useFilter = persistentFilterIds
+        ? effectiveFilterIds.length > 0
+        : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length);
       const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
@@ -310,7 +322,7 @@ function App() {
             symmetric: isSymmetric,
             excludeSelf: false,
             useFilter,
-            filterIds: useFilter ? filterIds : [],
+            filterIds: useFilter ? effectiveFilterIds : [],
             maxVariants: effectiveMaxVariants,
             engine: "python"
           }
@@ -324,7 +336,7 @@ function App() {
               totalLimit: effectiveTotalLimit,
               schema: "unigrams",
               useFilter,
-              filterIds: useFilter ? filterIds : [],
+              filterIds: useFilter ? effectiveFilterIds : [],
               maxVariants: effectiveMaxVariants
             }
         : {
@@ -338,7 +350,7 @@ function App() {
             totalLimit: effectiveTotalLimit,
             schema: "unigrams",
             useFilter,
-            filterIds: useFilter ? filterIds : [],
+            filterIds: useFilter ? effectiveFilterIds : [],
             symmetric: isSymmetric,
             excludeSelf: false
           };
@@ -346,7 +358,7 @@ function App() {
       setDebugRequest({
         endpoint: endpointPath,
         ...requestBody,
-        filterIds: `[${useFilter ? filterIds.length : 0} ids]`
+        filterIds: `[${useFilter ? effectiveFilterIds.length : 0} ids]`
       });
 
       const usedEngine = endpointPath === "near_fragments" ? "python" : null;
@@ -419,9 +431,10 @@ function App() {
         fastProfileApplied: usesFastNearProfile,
         matchMode: endpointPath === "near_fragments" ? effectiveMatchMode : null,
         phraseQuoted: hasQuotedPhrase,
+        hasPersistentFilterIds: !!persistentFilterIds,
         filteredDocs: filteredMetadata.length,
         useFilter,
-        filterIdsCount: useFilter ? filterIds.length : 0,
+        filterIdsCount: useFilter ? effectiveFilterIds.length : 0,
         nbPreviewLink: debugPreviewLink
       });
 
@@ -524,6 +537,7 @@ function App() {
       ).sort();
 
       setMetadataArray(parsedMetadata);
+      setPersistentFilterIds(parsedMetadata.map((item) => item.id));
       setUniqueAuthors(authors);
       setSelectedAuthors([]);
       setSelectedCategories(['All Categories']);
