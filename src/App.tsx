@@ -65,6 +65,7 @@ function App() {
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
   const [authorSearch, setAuthorSearch] = useState('');
   const [yearRange, setYearRange] = useState<[number, number]>([MIN_YEAR, MAX_YEAR]);
+  const [nearWindow, setNearWindow] = useState<number>(5);
   const [beforeWindow, setBeforeWindow] = useState<number>(15);
   const [afterWindow, setAfterWindow] = useState<number>(15);
   const [perBook, setPerBook] = useState<number>(3);
@@ -72,9 +73,6 @@ function App() {
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
-  const [nearEngine, setNearEngine] = useState<'python' | 'julia'>('python');
-  const [nearMatchMode, setNearMatchMode] = useState<'sequence' | 'near'>('near');
-  const [parallelShards, setParallelShards] = useState<boolean>(false);
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<React.ReactNode>(null);
@@ -272,14 +270,14 @@ function App() {
 
       const filterIds = filteredMetadata.map(item => item.id);
       const useFilter = filterIds.length > 0 && filterIds.length < metadataArray.length;
+      const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
       const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
       const normalizedDocSamples = Math.max(1, Math.floor(docSamples) || 1);
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
-      const normalizedWindow = Math.max(normalizedBefore, normalizedAfter);
-      const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : nearMatchMode;
+      const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
       const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
       const usesNearFragments = !!effectiveTermGroups && effectiveTermGroups.length > 1;
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
@@ -302,7 +300,7 @@ function App() {
         ? {
             termGroups: effectiveTermGroups,
             matchMode: effectiveMatchMode,
-            window: normalizedWindow,
+            window: normalizedNearWindow,
             before: normalizedBefore,
             after: normalizedAfter,
             perBook: effectivePerBook,
@@ -314,8 +312,7 @@ function App() {
             useFilter,
             filterIds: useFilter ? filterIds : [],
             maxVariants: effectiveMaxVariants,
-            engine: nearEngine,
-            parallelShards
+            engine: "python"
           }
         : endpointPath === "or_query"
           ? {
@@ -333,7 +330,7 @@ function App() {
         : {
             wordA,
             wordB,
-            window: normalizedWindow,
+            window: normalizedNearWindow,
             before: concordanceBefore,
             after: concordanceAfter,
             perBook: effectivePerBook,
@@ -352,7 +349,7 @@ function App() {
         filterIds: `[${useFilter ? filterIds.length : 0} ids]`
       });
 
-      const usedEngine = endpointPath === "near_fragments" ? nearEngine : null;
+      const usedEngine = endpointPath === "near_fragments" ? "python" : null;
 
       const concResp = await fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
         method: "POST",
@@ -362,9 +359,6 @@ function App() {
 
       if (!concResp.ok) {
         const errorText = await concResp.text();
-        if (concResp.status === 500 && endpointPath === "near_fragments" && nearEngine === "julia" && /julia probe failed/i.test(errorText)) {
-          throw new Error(`Julia engine error: ${errorText}`);
-        }
         if (concResp.status === 404) {
           const categoryText = selectedCategories.includes('All Categories')
             ? ''
@@ -411,7 +405,7 @@ function App() {
         ? metadataArray.find(item => item.id === rows[0].bookId)
         : undefined;
       const debugPreviewLink = debugPreviewMeta?.urn
-        ? `https://www.nb.no/items/${debugPreviewMeta.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${normalizedWindow}`
+        ? `https://www.nb.no/items/${debugPreviewMeta.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${normalizedNearWindow}`
         : null;
       setDebugInfo({
         endpoint: endpointPath,
@@ -628,7 +622,19 @@ function App() {
 
   return (
     <div className="container my-4">
-      <h1 className="text-center mb-4">ImagiNation Concordances</h1>
+      <h1 className="text-center mb-4 d-flex justify-content-center align-items-center gap-2">
+        <span>ImagiNation Concordances</span>
+        <button
+          className="btn btn-sm btn-outline-secondary rounded-circle d-inline-flex align-items-center justify-content-center"
+          type="button"
+          onClick={() => setShowHelpModal(true)}
+          title="Søkehjelp og eksempler"
+          aria-label="Søkehjelp og eksempler"
+          style={{ width: "30px", height: "30px", padding: 0 }}
+        >
+          <i className="bi bi-info-circle"></i>
+        </button>
+      </h1>
       <div className="row justify-content-center mb-3">
         <div className="col-md-8">
           <div className="d-flex flex-wrap flex-md-nowrap align-items-start gap-1">
@@ -674,13 +680,13 @@ function App() {
                   className="btn btn-outline-secondary"
                   type="button"
                   onClick={() => setShowSearchParamsModal(true)}
-                  title="Sokeparametre"
+                  title="Søkeparametre"
                 >
                   <i className="bi bi-sliders"></i>
                 </button>
               </div>
 
-              <div className="btn-group" role="group" aria-label="Debug and help">
+              <div className="btn-group" role="group" aria-label="Debug actions">
                 <button
                   className={`btn ${debugEnabled ? 'btn-warning' : 'btn-outline-secondary'}`}
                   type="button"
@@ -688,14 +694,6 @@ function App() {
                   title="Toggle debug mode"
                 >
                   <i className="bi bi-bug"></i>
-                </button>
-                <button
-                  className="btn btn-outline-secondary"
-                  type="button"
-                  onClick={() => setShowHelpModal(true)}
-                  title="Hjelp"
-                >
-                  <i className="bi bi-question-circle"></i>
                 </button>
               </div>
 
@@ -721,7 +719,6 @@ function App() {
           />
         </div>
       </div>
-
       <div className="border p-3" style={{ overflowY: "auto", height: "calc(100vh - 200px)" }}>
         <div style={{ fontSize: "12px", marginBottom: "10px", color: "#555" }}>{status}</div>
         {debugEnabled && (
@@ -940,7 +937,19 @@ function App() {
             <div className="modal-body">
               <div className="row g-3">
                 <div className="col-md-6">
-                  <label className="form-label">Before</label>
+                  <label className="form-label">Nærhetsvindu (window)</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={1}
+                    step={1}
+                    value={nearWindow}
+                    onChange={(e) => setNearWindow(Number(e.target.value))}
+                  />
+                  <small className="text-muted">Maks avstand mellom søkegrupper i treff.</small>
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label">Kontekst før (before)</label>
                   <input
                     type="number"
                     className="form-control"
@@ -949,9 +958,10 @@ function App() {
                     value={beforeWindow}
                     onChange={(e) => setBeforeWindow(Number(e.target.value))}
                   />
+                  <small className="text-muted">Antall ord (tokens) vist før treffet i utdraget.</small>
                 </div>
                 <div className="col-md-6">
-                  <label className="form-label">After</label>
+                  <label className="form-label">Kontekst etter (after)</label>
                   <input
                     type="number"
                     className="form-control"
@@ -960,6 +970,7 @@ function App() {
                     value={afterWindow}
                     onChange={(e) => setAfterWindow(Number(e.target.value))}
                   />
+                  <small className="text-muted">Antall ord (tokens) vist etter treffet i utdraget.</small>
                 </div>
                 <div className="col-md-6">
                   <label className="form-label">Samples per book</label>
@@ -1004,43 +1015,6 @@ function App() {
                     value={maxVariants}
                     onChange={(e) => setMaxVariants(Number(e.target.value))}
                   />
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Near engine</label>
-                  <select
-                    className="form-select"
-                    value={nearEngine}
-                    onChange={(e) => setNearEngine(e.target.value as 'python' | 'julia')}
-                  >
-                    <option value="python">python</option>
-                    <option value="julia">julia</option>
-                  </select>
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Match mode (near_fragments)</label>
-                  <select
-                    className="form-select"
-                    value={nearMatchMode}
-                    onChange={(e) => setNearMatchMode(e.target.value as 'sequence' | 'near')}
-                  >
-                    <option value="sequence">sequence (phrase)</option>
-                    <option value="near">near (proximity)</option>
-                  </select>
-                </div>
-                <div className="col-md-6">
-                  <div className="form-check mt-4">
-                    <input
-                      className="form-check-input"
-                      type="checkbox"
-                      id="parallelShardsCheck"
-                      checked={parallelShards}
-                      onChange={(e) => setParallelShards(e.target.checked)}
-                      disabled={nearEngine !== 'julia'}
-                    />
-                    <label className="form-check-label" htmlFor="parallelShardsCheck">
-                      parallelShards (Julia)
-                    </label>
-                  </div>
                 </div>
                 <div className="col-12">
                   <label className="form-label">Term groups JSON (optional)</label>
@@ -1089,7 +1063,7 @@ function App() {
         <div className="modal-dialog" role="document">
           <div className="modal-content">
             <div className="modal-header">
-              <h5 className="modal-title">Sokehjelp</h5>
+              <h5 className="modal-title">Søkehjelp</h5>
               <button
                 type="button"
                 className="btn-close"
@@ -1098,16 +1072,23 @@ function App() {
               ></button>
             </div>
             <div className="modal-body">
-              <p><strong>Vanlig sok:</strong> ett eller to ord, f.eks. <code>elskov kjærlighed</code>.</p>
+              <div className="alert alert-info py-2 mb-3">
+                Denne hjelpeteksten utvides fortløpende etter hvert som ny funksjonalitet kommer.
+              </div>
+              <div className="alert alert-light border py-2 mb-3">
+                <strong>Hva kan jeg søke etter?</strong><br />
+                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>.
+              </div>
+              <p><strong>Vanlig søk:</strong> ett eller to ord, f.eks. <code>elskov kjærlighed</code>.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, f.eks. <code>elskov*</code>.</p>
-              <p><strong>Frasesok:</strong> <code>spise middag</code> blir automatisk sendt som <code>[spise][middag]</code>.</p>
-              <p><strong>Termgrupper:</strong> skriv i sokefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
+              <p><strong>Frasesøk:</strong> skriv hele uttrykket i <code>" "</code> for sequence. Uten anførselstegn brukes near som standard.</p>
+              <p><strong>Termgrupper:</strong> skriv i søkefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
               <p><strong>Alternativ termgruppe-format:</strong> <code>[["spise","spiser"],["middag"]]</code>.</p>
-              <p><strong>Match mode:</strong> velg <code>sequence</code> (eksakt frase) eller <code>near</code> i sokeparametre.</p>
-              <p><strong>OR-gruppe:</strong> en gruppe som <code>[elskov, kjærlighed, forelskelse]</code> bruker OR-sok.</p>
-              <p><strong>Engine:</strong> Python/Julia velges i sokeparametre for near-kall.</p>
-              <p><strong>Filtrering:</strong> bruk verktoy-ikonet for forfatter, kategori og ar.</p>
-              <p><strong>Sokeparametre:</strong> juster vindu/sampling med sliders-ikonet.</p>
+              <p><strong>Sequence-regel:</strong> i sequence må gruppene stå i eksakt rekkefølge med avstand 1.</p>
+              <p><strong>OR-gruppe:</strong> en gruppe som <code>[elskov, kjærlighed, forelskelse]</code> bruker OR-søk.</p>
+              <p><strong>Engine:</strong> near-kall kjøres midlertidig med Python.</p>
+              <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år.</p>
+              <p><strong>Søkeparametre:</strong> <code>window</code> styrer nærhet, mens <code>before/after</code> styrer hvor mye kontekst som vises i utdraget.</p>
             </div>
             <div className="modal-footer">
               <button
