@@ -73,6 +73,7 @@ function App() {
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
   const [nearEngine, setNearEngine] = useState<'python' | 'julia'>('python');
+  const [nearMatchMode, setNearMatchMode] = useState<'sequence' | 'near'>('near');
   const [parallelShards, setParallelShards] = useState<boolean>(false);
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
@@ -148,6 +149,14 @@ function App() {
     return groups;
   };
 
+  const toSingleTermGroups = (rawQuery: string): string[][] => {
+    return rawQuery
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .map((token) => [token]);
+  };
+
   useEffect(() => {
     const timestamp = new Date().getTime();
     const jsonUrl = `corpus.json?v=${timestamp}`;
@@ -190,21 +199,29 @@ function App() {
 
   const performSearch = async () => {
     const trimmedQuery = query.trim();
-    const words = trimmedQuery.split(/\s+/).filter(Boolean);
+    const hasQuotedPhrase = /^"[^"]+"$/.test(trimmedQuery);
+    const normalizedQuery = hasQuotedPhrase ? trimmedQuery.slice(1, -1).trim() : trimmedQuery;
+    const words = normalizedQuery.split(/\s+/).filter(Boolean);
     const wordA = words[0] || "";
     const wordB = words.length === 2 ? words[1] : "";
     let parsedTermGroups: string[][] | null = null;
     const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
+    const autoPhraseTermGroups =
+      !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 2
+        ? toSingleTermGroups(normalizedQuery)
+        : null;
 
     if (termGroupsSource) {
       try {
         parsedTermGroups = parseTermGroups(termGroupsSource);
       } catch (error) {
-        setStatus(`Invalid termGroups JSON: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        setResults(<p key="term-groups-error" className="error">Invalid termGroups JSON format.</p>);
+        setStatus(`Invalid termGroups format: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        setResults(<p key="term-groups-error" className="error">Invalid termGroups format.</p>);
         return;
       }
     }
+
+    const effectiveTermGroups = parsedTermGroups ?? autoPhraseTermGroups;
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -218,7 +235,7 @@ function App() {
       return;
     }
 
-    if (!wordA && !parsedTermGroups) {
+    if (!wordA && !effectiveTermGroups) {
       alert("Please enter a search term");
       return;
     }
@@ -262,15 +279,18 @@ function App() {
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const normalizedWindow = Math.max(normalizedBefore, normalizedAfter);
-      const usesOrQuery = !!parsedTermGroups && parsedTermGroups.length === 1;
-      const usesNearFragments = (!!parsedTermGroups && parsedTermGroups.length > 1) || words.length > 2;
+      const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : nearMatchMode;
+      const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
+      const usesNearFragments = !!effectiveTermGroups && effectiveTermGroups.length > 1;
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
+      const usesAutoPhraseTermGroups = !!autoPhraseTermGroups;
+      const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
 
       // Fast profile for inline term-groups to keep latency low during interactive searching.
-      const effectivePerBook = usesInlineTermGroups ? Math.min(normalizedPerBook, 2) : normalizedPerBook;
-      const effectiveDocSamples = usesInlineTermGroups ? Math.min(normalizedDocSamples, 10) : normalizedDocSamples;
-      const effectiveTotalLimit = usesInlineTermGroups ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
-      const effectiveMaxVariants = usesInlineTermGroups ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
+      const effectivePerBook = usesFastNearProfile ? Math.min(normalizedPerBook, 2) : normalizedPerBook;
+      const effectiveDocSamples = usesFastNearProfile ? Math.min(normalizedDocSamples, 10) : normalizedDocSamples;
+      const effectiveTotalLimit = usesFastNearProfile ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
+      const effectiveMaxVariants = usesFastNearProfile ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
 
       const endpointPath = usesOrQuery
         ? "or_query"
@@ -280,9 +300,8 @@ function App() {
       const concordanceAfter = Math.min(normalizedAfter, 25);
       const requestBody = endpointPath === "near_fragments"
         ? {
-            ...(parsedTermGroups
-              ? { termGroups: parsedTermGroups }
-              : { terms: words }),
+            termGroups: effectiveTermGroups,
+            matchMode: effectiveMatchMode,
             window: normalizedWindow,
             before: normalizedBefore,
             after: normalizedAfter,
@@ -300,7 +319,7 @@ function App() {
           }
         : endpointPath === "or_query"
           ? {
-              termGroups: parsedTermGroups,
+              termGroups: effectiveTermGroups,
               before: normalizedBefore,
               after: normalizedAfter,
               perBook: effectivePerBook,
@@ -333,6 +352,8 @@ function App() {
         filterIds: `[${useFilter ? filterIds.length : 0} ids]`
       });
 
+      const usedEngine = endpointPath === "near_fragments" ? nearEngine : null;
+
       const concResp = await fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -341,6 +362,9 @@ function App() {
 
       if (!concResp.ok) {
         const errorText = await concResp.text();
+        if (concResp.status === 500 && endpointPath === "near_fragments" && nearEngine === "julia" && /julia probe failed/i.test(errorText)) {
+          throw new Error(`Julia engine error: ${errorText}`);
+        }
         if (concResp.status === 404) {
           const categoryText = selectedCategories.includes('All Categories')
             ? ''
@@ -392,12 +416,15 @@ function App() {
       setDebugInfo({
         endpoint: endpointPath,
         queryMode: endpointPath,
+        usedEngine,
         rows: rows.length,
         sampledDocs,
         expectedSampleCap,
         perBook: effectivePerBook,
         docSamples: effectiveDocSamples,
-        fastProfileApplied: usesInlineTermGroups,
+        fastProfileApplied: usesFastNearProfile,
+        matchMode: endpointPath === "near_fragments" ? effectiveMatchMode : null,
+        phraseQuoted: hasQuotedPhrase,
         filteredDocs: filteredMetadata.length,
         useFilter,
         filterIdsCount: useFilter ? filterIds.length : 0,
@@ -990,6 +1017,17 @@ function App() {
                   </select>
                 </div>
                 <div className="col-md-6">
+                  <label className="form-label">Match mode (near_fragments)</label>
+                  <select
+                    className="form-select"
+                    value={nearMatchMode}
+                    onChange={(e) => setNearMatchMode(e.target.value as 'sequence' | 'near')}
+                  >
+                    <option value="sequence">sequence (phrase)</option>
+                    <option value="near">near (proximity)</option>
+                  </select>
+                </div>
+                <div className="col-md-6">
                   <div className="form-check mt-4">
                     <input
                       className="form-check-input"
@@ -1062,8 +1100,10 @@ function App() {
             <div className="modal-body">
               <p><strong>Vanlig sok:</strong> ett eller to ord, f.eks. <code>elskov kjærlighed</code>.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, f.eks. <code>elskov*</code>.</p>
+              <p><strong>Frasesok:</strong> <code>spise middag</code> blir automatisk sendt som <code>[spise][middag]</code>.</p>
               <p><strong>Termgrupper:</strong> skriv i sokefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
               <p><strong>Alternativ termgruppe-format:</strong> <code>[["spise","spiser"],["middag"]]</code>.</p>
+              <p><strong>Match mode:</strong> velg <code>sequence</code> (eksakt frase) eller <code>near</code> i sokeparametre.</p>
               <p><strong>OR-gruppe:</strong> en gruppe som <code>[elskov, kjærlighed, forelskelse]</code> bruker OR-sok.</p>
               <p><strong>Engine:</strong> Python/Julia velges i sokeparametre for near-kall.</p>
               <p><strong>Filtrering:</strong> bruk verktoy-ikonet for forfatter, kategori og ar.</p>
