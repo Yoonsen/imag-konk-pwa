@@ -173,7 +173,12 @@ function App() {
     const trimmed = rawQuery.trim();
     if (!/#geo/.test(trimmed)) return { terms: null, invalid: false };
 
-    // Allowed:
+    // If #geo appears, it must be the first expression.
+    if (!trimmed.startsWith('#geo') && !trimmed.startsWith('[#geo')) {
+      return { terms: null, invalid: true };
+    }
+
+    // Allowed bracketed syntax:
     // 1) [#geo]
     // 2) [#geo] <one-extra-term>
     // 3) [#geo:oslo] (or [#geo:"Saint Cloud"]) alone
@@ -189,6 +194,24 @@ function App() {
     const geoNameOnlyMatch = trimmed.match(/^\[(#geo:[^\]]+)\]$/);
     if (geoNameOnlyMatch) {
       return { terms: [geoNameOnlyMatch[1]], invalid: false };
+    }
+
+    // Allowed unwrapped syntax (auto-wrapped by frontend):
+    // 1) #geo
+    // 2) #geo <one-extra-term>
+    // 3) #geo:oslo (or #geo:"Saint Cloud") alone
+    if (/^#geo$/.test(trimmed)) {
+      return { terms: ['#geo'], invalid: false };
+    }
+
+    const rawGeoPlusTermMatch = trimmed.match(/^#geo\s+(\S+)$/);
+    if (rawGeoPlusTermMatch) {
+      return { terms: ['#geo', rawGeoPlusTermMatch[1]], invalid: false };
+    }
+
+    const rawGeoNameOnlyMatch = trimmed.match(/^(#geo:(?:"[^"]+"|\S+))$/);
+    if (rawGeoNameOnlyMatch) {
+      return { terms: [rawGeoNameOnlyMatch[1]], invalid: false };
     }
 
     return { terms: null, invalid: true };
@@ -270,7 +293,7 @@ function App() {
     const trimmedQuery = query.trim();
     const geoQuery = parseGeoQuery(trimmedQuery);
     if (geoQuery.invalid) {
-      setStatus('Ugyldig geo-søk. Bruk [#geo], [#geo] <ett ord>, eller [#geo:oslo] alene.');
+      setStatus('Ugyldig geo-søk. Bruk #geo, #geo <ett ord>, eller #geo:oslo alene.');
       setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
       return;
     }
@@ -762,8 +785,8 @@ function App() {
               <input
                 type="text"
                 className="form-control"
-                placeholder='f.eks. norge, "norge i krig", [#geo], [#geo] krigsaaret'
-                title='Eksempler: norge | "norge i krig" | [#geo] | [#geo] krigsaaret | [#geo:oslo]'
+                placeholder='f.eks. norge, "norge i krig", #geo, #geo krigsaaret'
+                title='Eksempler: norge | "norge i krig" | #geo | #geo krigsaaret | #geo:oslo'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && performSearch()}
@@ -1194,7 +1217,7 @@ function App() {
               <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Frasesøk (sequence):</strong> skriv uttrykket i anførselstegn (<code>"..."</code>) for eksakt rekkefølge. Uten anførselstegn brukes nærhetssøk (<code>near</code>) som standard.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>[#geo]</code>, <code>[#geo] krigsaaret</code> (ett ekstra ord), eller <code>[#geo:oslo]</code> alene.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>#geo</code>, <code>#geo krigsaaret</code> (ett ekstra ord), eller <code>#geo:oslo</code> alene. Bracket-format støttes også.</p>
               <p><strong>Termgrupper (OR inni gruppe):</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code>. Alternativt JSON-format: <code>[["spise","spiser"],["middag"]]</code>.</p>
               <p><strong>Sequence-regel:</strong> i sequence må gruppene komme i eksakt rekkefølge og med avstand 1.</p>
               <p><strong>OR-gruppe:</strong> en enkelt gruppe som <code>[elskov, kjærlighed, forelskelse]</code> kjøres som OR-søk.</p>
