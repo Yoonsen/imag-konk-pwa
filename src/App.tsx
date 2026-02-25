@@ -13,8 +13,21 @@ interface Metadata {
 
 interface ConcordanceRow {
   bookId: number;
-  pos: number;
-  frag: string;
+  pos?: number;
+  frag?: string;
+  fragRaw?: string;
+  fragHtml?: string;
+  seqStart?: number;
+  tokenLen?: number;
+  surfaceText?: string;
+  place?: {
+    canonicalName?: string;
+    geonamesId?: number | string;
+    lat?: number | string;
+    lon?: number | string;
+    country?: string;
+    variantText?: string;
+  };
 }
 
 interface ConcordanceResponse {
@@ -69,7 +82,7 @@ function App() {
   const [beforeWindow, setBeforeWindow] = useState<number>(15);
   const [afterWindow, setAfterWindow] = useState<number>(15);
   const [perBook, setPerBook] = useState<number>(3);
-  const [docSamples, setDocSamples] = useState<number>(100);
+  const [docSamples, setDocSamples] = useState<number>(10);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
@@ -156,6 +169,62 @@ function App() {
       .map((token) => [token]);
   };
 
+  const parseGeoQuery = (rawQuery: string): { terms: string[] | null; invalid: boolean } => {
+    const trimmed = rawQuery.trim();
+    if (!/#geo/.test(trimmed)) return { terms: null, invalid: false };
+
+    // Allowed:
+    // 1) [#geo]
+    // 2) [#geo] <one-extra-term>
+    // 3) [#geo:oslo] (or [#geo:"Saint Cloud"]) alone
+    if (/^\[#geo\]$/.test(trimmed)) {
+      return { terms: ['#geo'], invalid: false };
+    }
+
+    const geoPlusTermMatch = trimmed.match(/^\[#geo\]\s+(\S+)$/);
+    if (geoPlusTermMatch) {
+      return { terms: ['#geo', geoPlusTermMatch[1]], invalid: false };
+    }
+
+    const geoNameOnlyMatch = trimmed.match(/^\[(#geo:[^\]]+)\]$/);
+    if (geoNameOnlyMatch) {
+      return { terms: [geoNameOnlyMatch[1]], invalid: false };
+    }
+
+    return { terms: null, invalid: true };
+  };
+
+  const withGeoAnnotationTitles = (html: string): string => {
+    if (!html || typeof window === 'undefined') return html;
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(`<div id="geo-wrap">${html}</div>`, 'text/html');
+    const wrapper = doc.getElementById('geo-wrap');
+    if (!wrapper) return html;
+
+    wrapper.querySelectorAll('annotation[data-layer="geo"]').forEach((node) => {
+      const canonicalName = node.getAttribute('data-geo-canonical-name') || node.getAttribute('data-geo-canonical');
+      const country = node.getAttribute('data-geo-country');
+      const lat = node.getAttribute('data-geo-lat');
+      const lon = node.getAttribute('data-geo-lon');
+      const geonamesId = node.getAttribute('data-geo-geonames-id');
+      const placeId = node.getAttribute('data-geo-place-id');
+      const tooltipParts = [
+        canonicalName && `Sted: ${canonicalName}`,
+        country && `Land: ${country}`,
+        geonamesId && `Geonames: ${geonamesId}`,
+        placeId && `Place ID: ${placeId}`,
+        lat && lon && `Koordinater: ${lat}, ${lon}`
+      ].filter(Boolean);
+
+      if (tooltipParts.length > 0) {
+        node.setAttribute('data-geo-tooltip', tooltipParts.join(' | '));
+        node.removeAttribute('title');
+      }
+    });
+
+    return wrapper.innerHTML;
+  };
+
   useEffect(() => {
     const timestamp = new Date().getTime();
     const jsonUrl = `corpus.json?v=${timestamp}`;
@@ -199,15 +268,19 @@ function App() {
 
   const performSearch = async () => {
     const trimmedQuery = query.trim();
+    const geoQuery = parseGeoQuery(trimmedQuery);
+    if (geoQuery.invalid) {
+      setStatus('Ugyldig geo-søk. Bruk [#geo], [#geo] <ett ord>, eller [#geo:oslo] alene.');
+      setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
+      return;
+    }
     const hasQuotedPhrase = /^"[^"]+"$/.test(trimmedQuery);
     const normalizedQuery = hasQuotedPhrase ? trimmedQuery.slice(1, -1).trim() : trimmedQuery;
     const words = normalizedQuery.split(/\s+/).filter(Boolean);
-    const wordA = words[0] || "";
-    const wordB = words.length === 2 ? words[1] : "";
     let parsedTermGroups: string[][] | null = null;
     const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
-    const autoPhraseTermGroups =
-      !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 2
+    const autoTermGroups =
+      !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 1
         ? toSingleTermGroups(normalizedQuery)
         : null;
 
@@ -221,7 +294,7 @@ function App() {
       }
     }
 
-    const effectiveTermGroups = parsedTermGroups ?? autoPhraseTermGroups;
+    const effectiveTermGroups = geoQuery.terms ? null : (parsedTermGroups ?? autoTermGroups);
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -235,7 +308,7 @@ function App() {
       return;
     }
 
-    if (!wordA && !effectiveTermGroups) {
+    if (!effectiveTermGroups && !geoQuery.terms) {
       alert("Please enter a search term");
       return;
     }
@@ -291,9 +364,8 @@ function App() {
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
       const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
-      const usesNearFragments = !!effectiveTermGroups && effectiveTermGroups.length > 1;
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
-      const usesAutoPhraseTermGroups = !!autoPhraseTermGroups;
+      const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
       const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
 
       // Fast profile for inline term-groups to keep latency low during interactive searching.
@@ -302,13 +374,23 @@ function App() {
       const effectiveTotalLimit = usesFastNearProfile ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
       const effectiveMaxVariants = usesFastNearProfile ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
 
-      const endpointPath = usesOrQuery
+      const endpointPath = geoQuery.terms
         ? "or_query"
-        : (usesNearFragments ? "near_fragments" : "concordance");
+        : usesOrQuery
+        ? "or_query"
+        : "near_fragments";
 
-      const concordanceBefore = Math.min(normalizedBefore, 25);
-      const concordanceAfter = Math.min(normalizedAfter, 25);
-      const requestBody = endpointPath === "near_fragments"
+      const requestBody = geoQuery.terms
+        ? {
+            terms: geoQuery.terms,
+            before: normalizedBefore,
+            after: normalizedAfter,
+            docSamples: effectiveDocSamples,
+            totalLimit: effectiveTotalLimit,
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : []
+          }
+        : endpointPath === "near_fragments"
         ? {
             termGroups: effectiveTermGroups,
             matchMode: effectiveMatchMode,
@@ -339,21 +421,11 @@ function App() {
               filterIds: useFilter ? effectiveFilterIds : [],
               maxVariants: effectiveMaxVariants
             }
-        : {
-            wordA,
-            wordB,
-            window: normalizedNearWindow,
-            before: concordanceBefore,
-            after: concordanceAfter,
-            perBook: effectivePerBook,
-            docSamples: effectiveDocSamples,
-            totalLimit: effectiveTotalLimit,
-            schema: "unigrams",
-            useFilter,
-            filterIds: useFilter ? effectiveFilterIds : [],
-            symmetric: isSymmetric,
-            excludeSelf: false
-          };
+        : null;
+
+      if (!requestBody) {
+        throw new Error(`Unsupported endpoint configuration: ${endpointPath}`);
+      }
 
       setDebugRequest({
         endpoint: endpointPath,
@@ -423,6 +495,7 @@ function App() {
         endpoint: endpointPath,
         queryMode: endpointPath,
         usedEngine,
+        isGeoQuery: !!geoQuery.terms,
         rows: rows.length,
         sampledDocs,
         expectedSampleCap,
@@ -444,10 +517,11 @@ function App() {
       }
 
       const newResults = rows.map((row, index) => {
-        const text = row.frag;
+        const textHtml = row.fragHtml ? withGeoAnnotationTitles(row.fragHtml) : null;
+        const textRaw = row.fragRaw ?? row.frag ?? '';
         const metadata = metadataArray.find(item => item.id === row.bookId);
         const nbProximity = Math.max(normalizedBefore, normalizedAfter);
-        const urnLink = metadata?.urn
+        const baseUrnLink = metadata?.urn
           ? `https://www.nb.no/items/${metadata.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${nbProximity}`
           : "#";
 
@@ -456,14 +530,37 @@ function App() {
             key={index} 
             className="concordance"
             data-book-id={row.bookId}
-            onClick={() => metadata && handleConcordanceClick(metadata, urnLink)}
+            onClick={(event) => {
+              if (!metadata) return;
+              const target = event.target as HTMLElement;
+              const annotationEl = target.closest('annotation[data-layer="geo"]') as HTMLElement | null;
+
+              if (annotationEl && metadata.urn) {
+                const geoSearchTerm = annotationEl.textContent?.trim() || trimmedQuery;
+                const extraGeoTerm = geoQuery.terms && geoQuery.terms.length === 2
+                  ? geoQuery.terms[1]
+                  : null;
+                const escapedGeoTerm = geoSearchTerm.replace(/"/g, '\\"').trim();
+                const escapedExtraTerm = extraGeoTerm ? extraGeoTerm.replace(/"/g, '\\"').trim() : null;
+                const geoSearchExpression = escapedExtraTerm
+                  ? `"${escapedGeoTerm} ${escapedExtraTerm}"~${normalizedNearWindow}`
+                  : escapedGeoTerm;
+                const geoUrnLink = `https://www.nb.no/items/${metadata.urn}?searchText=${encodeURIComponent(geoSearchExpression)}`;
+                handleConcordanceClick(metadata, geoUrnLink);
+                return;
+              }
+
+              handleConcordanceClick(metadata, baseUrnLink);
+            }}
           >
             {debugEnabled && (
               <div className="text-muted" style={{ fontSize: "11px" }}>
                 dhlabid: {row.bookId}
               </div>
             )}
-            <p>{text}</p>
+            {textHtml
+              ? <p dangerouslySetInnerHTML={{ __html: textHtml }} />
+              : <p>{textRaw}</p>}
           </div>
         );
       });
@@ -1093,16 +1190,16 @@ function App() {
                 <strong>Hva kan jeg søke etter?</strong><br />
                 <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>.
               </div>
-              <p><strong>Vanlig søk:</strong> ett eller to ord, f.eks. <code>elskov kjærlighed</code>.</p>
-              <p><strong>Wildcard:</strong> bruk <code>*</code>, f.eks. <code>elskov*</code>.</p>
-              <p><strong>Frasesøk:</strong> skriv hele uttrykket i <code>" "</code> for sequence. Uten anførselstegn brukes near som standard.</p>
-              <p><strong>Termgrupper:</strong> skriv i søkefeltet, f.eks. <code>[spise, spiser] middag</code>.</p>
-              <p><strong>Alternativ termgruppe-format:</strong> <code>[["spise","spiser"],["middag"]]</code>.</p>
-              <p><strong>Sequence-regel:</strong> i sequence må gruppene stå i eksakt rekkefølge med avstand 1.</p>
-              <p><strong>OR-gruppe:</strong> en gruppe som <code>[elskov, kjærlighed, forelskelse]</code> bruker OR-søk.</p>
-              <p><strong>Engine:</strong> near-kall kjøres midlertidig med Python.</p>
+              <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>.</p>
+              <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
+              <p><strong>Frasesøk (sequence):</strong> skriv uttrykket i anførselstegn (<code>"..."</code>) for eksakt rekkefølge. Uten anførselstegn brukes nærhetssøk (<code>near</code>) som standard.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>[#geo]</code>, <code>[#geo] krigsaaret</code> (ett ekstra ord), eller <code>[#geo:oslo]</code> alene.</p>
+              <p><strong>Termgrupper (OR inni gruppe):</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code>. Alternativt JSON-format: <code>[["spise","spiser"],["middag"]]</code>.</p>
+              <p><strong>Sequence-regel:</strong> i sequence må gruppene komme i eksakt rekkefølge og med avstand 1.</p>
+              <p><strong>OR-gruppe:</strong> en enkelt gruppe som <code>[elskov, kjærlighed, forelskelse]</code> kjøres som OR-søk.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år.</p>
-              <p><strong>Søkeparametre:</strong> <code>window</code> styrer nærhet, mens <code>before/after</code> styrer hvor mye kontekst som vises i utdraget.</p>
+              <p><strong>Søkeparametre:</strong> <code>window</code> = maks avstand mellom søkegrupper i trefflogikken; <code>before / after</code> = hvor mye kontekst som vises i utdrag.</p>
+              <p><strong>Teknisk status:</strong> near-kall kjøres midlertidig med Python-engine.</p>
             </div>
             <div className="modal-footer">
               <button

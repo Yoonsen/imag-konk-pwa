@@ -13,6 +13,33 @@
   margin: 0;
 }
 
+.concordance annotation[data-layer="geo"] {
+  background-color: #fff3cd;
+  border-bottom: 1px dotted #d39e00;
+  padding: 0 2px;
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+}
+
+.concordance annotation[data-layer="geo"][data-geo-tooltip]:hover::after {
+  content: attr(data-geo-tooltip);
+  position: absolute;
+  left: 0;
+  top: calc(100% + 4px);
+  z-index: 2000;
+  max-width: 360px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #1f2937;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
 .error {
   color: #dc3545;
   padding: 10px;
