@@ -642,10 +642,10 @@ function App() {
             year: yearValue === '' ? undefined : (yearValue as number | string)
           } as Metadata;
         })
-        .filter((item) => Number.isFinite(item.id) && item.urn.length > 0);
+        .filter((item) => Number.isFinite(item.id));
 
       if (parsedMetadata.length === 0) {
-        throw new Error('No valid corpus rows found. Expected columns like id/dhlabid, urn, title, author, category, year.');
+        throw new Error('No valid corpus rows found. Expected at least id/dhlabid (urn is optional).');
       }
 
       const authors = Array.from(
