@@ -104,6 +104,7 @@ function App() {
   const [debugRequest, setDebugRequest] = useState<Record<string, unknown> | null>(null);
   const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const baseMetadataByIdRef = useRef<Map<number, Metadata>>(new Map());
 
   const parseTermGroups = (rawInput: string): string[][] | null => {
     const trimmed = rawInput.trim();
@@ -248,6 +249,13 @@ function App() {
     return wrapper.innerHTML;
   };
 
+  const buildNationalLibraryLink = (urn: string | undefined, searchText: string): string => {
+    if (urn && urn.trim().length > 0) {
+      return `https://www.nb.no/items/${urn}?searchText=${encodeURIComponent(searchText)}`;
+    }
+    return `https://www.nb.no/search?q=${encodeURIComponent(searchText)}`;
+  };
+
   useEffect(() => {
     const timestamp = new Date().getTime();
     const jsonUrl = `corpus.json?v=${timestamp}`;
@@ -262,6 +270,12 @@ function App() {
         );
 
         if (sanitizedData && Array.isArray(sanitizedData.dhlabids)) {
+          const baseMetadata = sanitizedData.dhlabids.filter(
+            (item: Metadata) => Number.isFinite(Number(item.id))
+          ) as Metadata[];
+          baseMetadataByIdRef.current = new Map(
+            baseMetadata.map((item) => [Number(item.id), item])
+          );
           setMetadataArray(sanitizedData.dhlabids);
           setPersistentFilterIds(null);
           // Extract unique authors
@@ -511,8 +525,9 @@ function App() {
       const debugPreviewMeta = rows.length > 0
         ? metadataArray.find(item => item.id === rows[0].bookId)
         : undefined;
-      const debugPreviewLink = debugPreviewMeta?.urn
-        ? `https://www.nb.no/items/${debugPreviewMeta.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${normalizedNearWindow}`
+      const debugPreviewQuery = `"${trimmedQuery}"~${normalizedNearWindow}`;
+      const debugPreviewLink = debugPreviewMeta
+        ? buildNationalLibraryLink(debugPreviewMeta.urn, debugPreviewQuery)
         : null;
       setDebugInfo({
         endpoint: endpointPath,
@@ -544,9 +559,8 @@ function App() {
         const textRaw = row.fragRaw ?? row.frag ?? '';
         const metadata = metadataArray.find(item => item.id === row.bookId);
         const nbProximity = Math.max(normalizedBefore, normalizedAfter);
-        const baseUrnLink = metadata?.urn
-          ? `https://www.nb.no/items/${metadata.urn}?searchText="${encodeURIComponent(trimmedQuery)}"~${nbProximity}`
-          : "#";
+        const baseSearchExpression = `"${trimmedQuery}"~${nbProximity}`;
+        const baseUrnLink = buildNationalLibraryLink(metadata?.urn, baseSearchExpression);
 
         return (
           <div 
@@ -558,7 +572,7 @@ function App() {
               const target = event.target as HTMLElement;
               const annotationEl = target.closest('annotation[data-layer="geo"]') as HTMLElement | null;
 
-              if (annotationEl && metadata.urn) {
+              if (annotationEl) {
                 const geoSearchTerm = annotationEl.textContent?.trim() || trimmedQuery;
                 const extraGeoTerm = geoQuery.terms && geoQuery.terms.length === 2
                   ? geoQuery.terms[1]
@@ -568,7 +582,7 @@ function App() {
                 const geoSearchExpression = escapedExtraTerm
                   ? `"${escapedGeoTerm} ${escapedExtraTerm}"~${normalizedNearWindow}`
                   : escapedGeoTerm;
-                const geoUrnLink = `https://www.nb.no/items/${metadata.urn}?searchText=${encodeURIComponent(geoSearchExpression)}`;
+                const geoUrnLink = buildNationalLibraryLink(metadata.urn, geoSearchExpression);
                 handleConcordanceClick(metadata, geoUrnLink);
                 return;
               }
@@ -642,7 +656,18 @@ function App() {
             year: yearValue === '' ? undefined : (yearValue as number | string)
           } as Metadata;
         })
-        .filter((item) => Number.isFinite(item.id));
+        .filter((item) => Number.isFinite(item.id))
+        .map((item) => {
+          const base = baseMetadataByIdRef.current.get(item.id);
+          return {
+            ...item,
+            urn: item.urn || base?.urn || '',
+            title: item.title || base?.title,
+            author: item.author || base?.author,
+            category: item.category || base?.category,
+            year: item.year ?? base?.year
+          } as Metadata;
+        });
 
       if (parsedMetadata.length === 0) {
         throw new Error('No valid corpus rows found. Expected at least id/dhlabid (urn is optional).');
