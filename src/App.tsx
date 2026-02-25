@@ -278,6 +278,14 @@ function App() {
           );
           setMetadataArray(sanitizedData.dhlabids);
           setPersistentFilterIds(null);
+          setSelectedAuthors([]);
+          setAuthorSearch('');
+          setSelectedCategories(['All Categories']);
+          setYearRange([MIN_YEAR, MAX_YEAR]);
+          setResults(null);
+          setLastConcordanceRows([]);
+          setDebugRequest(null);
+          setDebugInfo(null);
           // Extract unique authors
           const authors = Array.from(new Set(
             sanitizedData.dhlabids
@@ -685,7 +693,13 @@ function App() {
       setPersistentFilterIds(parsedMetadata.map((item) => item.id));
       setUniqueAuthors(authors);
       setSelectedAuthors([]);
+      setAuthorSearch('');
       setSelectedCategories(['All Categories']);
+      setYearRange([MIN_YEAR, MAX_YEAR]);
+      setResults(null);
+      setLastConcordanceRows([]);
+      setDebugRequest(null);
+      setDebugInfo(null);
       setStatus(`Loaded metadata for ${parsedMetadata.length} documents from "${file.name}".`);
     } catch (error) {
       setStatus(`Error loading corpus file: ${error instanceof Error ? error.message : 'Unknown error'}`);
