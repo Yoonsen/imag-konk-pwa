@@ -762,7 +762,8 @@ function App() {
               <input
                 type="text"
                 className="form-control"
-                placeholder="e.g. Norge"
+                placeholder='f.eks. norge, "norge i krig", [#geo], [#geo] krigsaaret'
+                title='Eksempler: norge | "norge i krig" | [#geo] | [#geo] krigsaaret | [#geo:oslo]'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && performSearch()}
