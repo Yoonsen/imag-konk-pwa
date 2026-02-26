@@ -82,7 +82,7 @@ function App() {
   const [beforeWindow, setBeforeWindow] = useState<number>(15);
   const [afterWindow, setAfterWindow] = useState<number>(15);
   const [perBook, setPerBook] = useState<number>(3);
-  const [docSamples, setDocSamples] = useState<number>(10);
+  const [docSamples, setDocSamples] = useState<number>(50);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
@@ -404,7 +404,7 @@ function App() {
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
       const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
-      const normalizedDocSamples = Math.max(1, Math.floor(docSamples) || 1);
+      const normalizedDocSamples = Math.max(0, Math.floor(docSamples) || 0);
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
@@ -415,7 +415,7 @@ function App() {
 
       // Fast profile for inline term-groups to keep latency low during interactive searching.
       const effectivePerBook = usesFastNearProfile ? Math.min(normalizedPerBook, 2) : normalizedPerBook;
-      const effectiveDocSamples = usesFastNearProfile ? Math.min(normalizedDocSamples, 10) : normalizedDocSamples;
+      const effectiveDocSamples = normalizedDocSamples;
       const effectiveTotalLimit = usesFastNearProfile ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
       const effectiveMaxVariants = usesFastNearProfile ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
 
@@ -1162,7 +1162,7 @@ function App() {
                   <input
                     type="number"
                     className="form-control"
-                    min={1}
+                    min={0}
                     step={1}
                     value={docSamples}
                     onChange={(e) => setDocSamples(Number(e.target.value))}
