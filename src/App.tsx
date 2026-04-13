@@ -34,6 +34,11 @@ interface ConcordanceResponse {
   rows: ConcordanceRow[];
 }
 
+interface CountResponse {
+  total?: number;
+  docs?: number;
+}
+
 interface ModalData {
   title: string;
   author: string;
@@ -85,6 +90,7 @@ function App() {
   const [docSamples, setDocSamples] = useState<number>(50);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
+  const [resultMode, setResultMode] = useState<'render' | 'count'>('render');
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
@@ -170,52 +176,87 @@ function App() {
       .map((token) => [token]);
   };
 
-  const parseGeoQuery = (rawQuery: string): { terms: string[] | null; invalid: boolean } => {
+  const parseGeoQuery = (rawQuery: string): {
+    terms: string[] | null;
+    termGroups: string[][] | null;
+    extraTerm: string | null;
+    invalid: boolean;
+  } => {
     const trimmed = rawQuery.trim();
-    if (!/#geo/.test(trimmed)) return { terms: null, invalid: false };
+    if (!/#geo/.test(trimmed)) return { terms: null, termGroups: null, extraTerm: null, invalid: false };
 
     // If #geo appears, it must be the first expression.
     if (!trimmed.startsWith('#geo') && !trimmed.startsWith('[#geo')) {
-      return { terms: null, invalid: true };
+      return { terms: null, termGroups: null, extraTerm: null, invalid: true };
     }
 
     // Allowed bracketed syntax:
     // 1) [#geo]
     // 2) [#geo] <one-extra-term>
-    // 3) [#geo:oslo] (or [#geo:"Saint Cloud"]) alone
+    // 3) [#geo:geonames:317552] (or [#geo:internal:7081]) alone
     if (/^\[#geo\]$/.test(trimmed)) {
-      return { terms: ['#geo'], invalid: false };
+      return { terms: ['#geo'], termGroups: null, extraTerm: null, invalid: false };
     }
 
     const geoPlusTermMatch = trimmed.match(/^\[#geo\]\s+(\S+)$/);
     if (geoPlusTermMatch) {
-      return { terms: ['#geo', geoPlusTermMatch[1]], invalid: false };
+      return {
+        terms: null,
+        termGroups: [['#geo'], [geoPlusTermMatch[1]]],
+        extraTerm: geoPlusTermMatch[1],
+        invalid: false
+      };
     }
 
     const geoNameOnlyMatch = trimmed.match(/^\[(#geo:[^\]]+)\]$/);
     if (geoNameOnlyMatch) {
-      return { terms: [geoNameOnlyMatch[1]], invalid: false };
+      return { terms: [geoNameOnlyMatch[1]], termGroups: null, extraTerm: null, invalid: false };
+    }
+
+    const geoIdPlusTermMatch = trimmed.match(/^\[(#geo:(?:geonames|internal):[^\]]+)\]\s+(\S+)$/);
+    if (geoIdPlusTermMatch) {
+      return {
+        terms: null,
+        termGroups: [[geoIdPlusTermMatch[1]], [geoIdPlusTermMatch[2]]],
+        extraTerm: geoIdPlusTermMatch[2],
+        invalid: false
+      };
     }
 
     // Allowed unwrapped syntax (auto-wrapped by frontend):
     // 1) #geo
     // 2) #geo <one-extra-term>
-    // 3) #geo:oslo (or #geo:"Saint Cloud") alone
+    // 3) #geo:geonames:317552 (or #geo:internal:7081) alone
     if (/^#geo$/.test(trimmed)) {
-      return { terms: ['#geo'], invalid: false };
+      return { terms: ['#geo'], termGroups: null, extraTerm: null, invalid: false };
     }
 
     const rawGeoPlusTermMatch = trimmed.match(/^#geo\s+(\S+)$/);
     if (rawGeoPlusTermMatch) {
-      return { terms: ['#geo', rawGeoPlusTermMatch[1]], invalid: false };
+      return {
+        terms: null,
+        termGroups: [['#geo'], [rawGeoPlusTermMatch[1]]],
+        extraTerm: rawGeoPlusTermMatch[1],
+        invalid: false
+      };
     }
 
-    const rawGeoNameOnlyMatch = trimmed.match(/^(#geo:(?:"[^"]+"|\S+))$/);
+    const rawGeoNameOnlyMatch = trimmed.match(/^(#geo:(?:geonames|internal):\S+)$/);
     if (rawGeoNameOnlyMatch) {
-      return { terms: [rawGeoNameOnlyMatch[1]], invalid: false };
+      return { terms: [rawGeoNameOnlyMatch[1]], termGroups: null, extraTerm: null, invalid: false };
     }
 
-    return { terms: null, invalid: true };
+    const rawGeoIdPlusTermMatch = trimmed.match(/^(#geo:(?:geonames|internal):\S+)\s+(\S+)$/);
+    if (rawGeoIdPlusTermMatch) {
+      return {
+        terms: null,
+        termGroups: [[rawGeoIdPlusTermMatch[1]], [rawGeoIdPlusTermMatch[2]]],
+        extraTerm: rawGeoIdPlusTermMatch[2],
+        invalid: false
+      };
+    }
+
+    return { terms: null, termGroups: null, extraTerm: null, invalid: true };
   };
 
   const withGeoAnnotationTitles = (html: string): string => {
@@ -315,7 +356,7 @@ function App() {
     const trimmedQuery = query.trim();
     const geoQuery = parseGeoQuery(trimmedQuery);
     if (geoQuery.invalid) {
-      setStatus('Ugyldig geo-søk. Bruk #geo, #geo <ett ord>, eller #geo:oslo alene.');
+      setStatus('Ugyldig geo-søk. Bruk #geo, #geo <ett ord>, #geo:geonames:<id>, eller #geo:internal:<id>.');
       setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
       return;
     }
@@ -339,7 +380,7 @@ function App() {
       }
     }
 
-    const effectiveTermGroups = geoQuery.terms ? null : (parsedTermGroups ?? autoTermGroups);
+    const effectiveTermGroups = (geoQuery.terms || geoQuery.termGroups) ? null : (parsedTermGroups ?? autoTermGroups);
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -353,7 +394,7 @@ function App() {
       return;
     }
 
-    if (!effectiveTermGroups && !geoQuery.terms) {
+    if (!effectiveTermGroups && !geoQuery.terms && !geoQuery.termGroups) {
       alert("Please enter a search term");
       return;
     }
@@ -409,6 +450,7 @@ function App() {
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
       const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
+      const usesNearQueryCount = !geoQuery.termGroups && !!effectiveTermGroups && effectiveTermGroups.length > 1 && resultMode === 'count';
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
       const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
       const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
@@ -419,13 +461,33 @@ function App() {
       const effectiveTotalLimit = usesFastNearProfile ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
       const effectiveMaxVariants = usesFastNearProfile ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
 
-      const endpointPath = geoQuery.terms
+      const endpointPath = geoQuery.termGroups
+        ? "near_query"
+        : geoQuery.terms
         ? "or_query"
+        : usesNearQueryCount
+        ? "near_query"
         : usesOrQuery
         ? "or_query"
         : "near_fragments";
 
-      const requestBody = geoQuery.terms
+      const requestBody = geoQuery.termGroups
+        ? {
+            termGroups: geoQuery.termGroups,
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : [],
+            mode: resultMode,
+            perBook: effectivePerBook,
+            totalLimit: effectiveTotalLimit,
+            docSamples: effectiveDocSamples,
+            schema: "unigrams",
+            symmetric: isSymmetric,
+            excludeSelf: false,
+            window: normalizedNearWindow,
+            before: normalizedBefore,
+            after: normalizedAfter
+          }
+        : geoQuery.terms
         ? {
             terms: geoQuery.terms,
             before: normalizedBefore,
@@ -433,7 +495,24 @@ function App() {
             docSamples: effectiveDocSamples,
             totalLimit: effectiveTotalLimit,
             useFilter,
-            filterIds: useFilter ? effectiveFilterIds : []
+            filterIds: useFilter ? effectiveFilterIds : [],
+            renderHits: true
+          }
+        : endpointPath === "near_query"
+        ? {
+            termGroups: effectiveTermGroups,
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : [],
+            mode: "count",
+            perBook: effectivePerBook,
+            totalLimit: effectiveTotalLimit,
+            docSamples: effectiveDocSamples,
+            schema: "unigrams",
+            symmetric: isSymmetric,
+            excludeSelf: false,
+            window: normalizedNearWindow,
+            before: normalizedBefore,
+            after: normalizedAfter
           }
         : endpointPath === "near_fragments"
         ? {
@@ -478,6 +557,7 @@ function App() {
         filterIds: `[${useFilter ? effectiveFilterIds.length : 0} ids]`
       });
 
+      const requestStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const usedEngine = endpointPath === "near_fragments" ? "python" : null;
 
       const concResp = await fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
@@ -512,6 +592,49 @@ function App() {
         throw new Error(`HTTP error ${concResp.status}: ${errorText}`);
       }
 
+      const responseElapsedMs = Math.round(
+        (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
+      );
+
+      if ((geoQuery.termGroups && resultMode === 'count') || usesNearQueryCount) {
+        const countResp: CountResponse = await concResp.json();
+        const categoryText = selectedCategories.includes('All Categories')
+          ? ''
+          : ` in categories: ${selectedCategories.join(', ')}`;
+        const authorText = selectedAuthors.length > 0
+          ? ` by authors: ${selectedAuthors.join(', ')}`
+          : '';
+        const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+          ? ''
+          : ` from ${yearRange[0]} to ${yearRange[1]}`;
+        const total = typeof countResp.total === 'number' ? countResp.total : 0;
+        const docs = typeof countResp.docs === 'number' ? countResp.docs : 0;
+
+        setStatus(`Found ${total} matches for "${trimmedQuery}"${categoryText}${authorText}${yearText} (docs: ${docs}, ${responseElapsedMs} ms)`);
+        setLastConcordanceRows([]);
+        setResults(
+          <div className="concordance">
+            <p><strong>Treff:</strong> {total}</p>
+            <p><strong>Dokumenter:</strong> {docs}</p>
+            <p><strong>Tid:</strong> {responseElapsedMs} ms</p>
+          </div>
+        );
+        setDebugInfo({
+          endpoint: endpointPath,
+          queryMode: endpointPath,
+          usedEngine: null,
+          isGeoQuery: !!geoQuery.termGroups,
+          resultMode,
+          total,
+          docs,
+          responseMs: responseElapsedMs,
+          filteredDocs: filteredMetadata.length,
+          useFilter,
+          filterIdsCount: useFilter ? effectiveFilterIds.length : 0
+        });
+        return;
+      }
+
       const conc: ConcordanceResponse = await concResp.json();
       const categoryText = selectedCategories.includes('All Categories') 
         ? '' 
@@ -527,7 +650,7 @@ function App() {
       const expectedSampleCap = effectiveDocSamples * effectivePerBook;
       setStatus(
         `Found ${rows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
-        `(sampled docs: ${sampledDocs}, cap: ${expectedSampleCap})`
+        `(sampled docs: ${sampledDocs}, cap: ${expectedSampleCap}, ${responseElapsedMs} ms)`
       );
       setLastConcordanceRows(rows);
       const debugPreviewMeta = rows.length > 0
@@ -542,11 +665,13 @@ function App() {
         queryMode: endpointPath,
         usedEngine,
         isGeoQuery: !!geoQuery.terms,
+        resultMode: (geoQuery.termGroups || (!!effectiveTermGroups && effectiveTermGroups.length > 1)) ? resultMode : null,
         rows: rows.length,
         sampledDocs,
         expectedSampleCap,
         perBook: effectivePerBook,
         docSamples: effectiveDocSamples,
+        responseMs: responseElapsedMs,
         fastProfileApplied: usesFastNearProfile,
         matchMode: endpointPath === "near_fragments" ? effectiveMatchMode : null,
         phraseQuoted: hasQuotedPhrase,
@@ -582,9 +707,7 @@ function App() {
 
               if (annotationEl) {
                 const geoSearchTerm = annotationEl.textContent?.trim() || trimmedQuery;
-                const extraGeoTerm = geoQuery.terms && geoQuery.terms.length === 2
-                  ? geoQuery.terms[1]
-                  : null;
+                const extraGeoTerm = geoQuery.extraTerm;
                 const escapedGeoTerm = geoSearchTerm.replace(/"/g, '\\"').trim();
                 const escapedExtraTerm = extraGeoTerm ? extraGeoTerm.replace(/"/g, '\\"').trim() : null;
                 const geoSearchExpression = escapedExtraTerm
@@ -605,7 +728,9 @@ function App() {
             )}
             {textHtml
               ? <p dangerouslySetInnerHTML={{ __html: textHtml }} />
-              : <p>{textRaw}</p>}
+              : textRaw
+                ? <p>{textRaw}</p>
+                : <p className="text-muted fst-italic">Ingen fragmenttekst fra backend.</p>}
           </div>
         );
       });
@@ -824,8 +949,8 @@ function App() {
               <input
                 type="text"
                 className="form-control"
-                placeholder='f.eks. norge, "norge i krig", #geo, #geo krigsaaret'
-                title='Eksempler: norge | "norge i krig" | #geo | #geo krigsaaret | #geo:oslo'
+                placeholder='f.eks. norge, "norge i krig", #geo, #geo krig, #geo:geonames:317552'
+                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo:geonames:317552 | #geo:internal:7081'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && performSearch()}
@@ -1190,6 +1315,18 @@ function App() {
                     onChange={(e) => setMaxVariants(Number(e.target.value))}
                   />
                 </div>
+                <div className="col-md-6">
+                  <label className="form-label">Resultatmodus</label>
+                  <select
+                    className="form-select"
+                    value={resultMode}
+                    onChange={(e) => setResultMode(e.target.value as 'render' | 'count')}
+                  >
+                    <option value="render">fragmenter / konkordans</option>
+                    <option value="count">opptelling</option>
+                  </select>
+                  <small className="text-muted">Gjelder flergruppesøk og geo-near. Bruk count for rask skipgramtelling.</small>
+                </div>
                 <div className="col-12">
                   <label className="form-label">Term groups JSON (optional)</label>
                   <textarea
@@ -1256,7 +1393,8 @@ function App() {
               <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Frasesøk (sequence):</strong> skriv uttrykket i anførselstegn (<code>"..."</code>) for eksakt rekkefølge. Uten anførselstegn brukes nærhetssøk (<code>near</code>) som standard.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>#geo</code>, <code>#geo krigsaaret</code> (ett ekstra ord), eller <code>#geo:oslo</code> alene. Bracket-format støttes også.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>#geo</code>, <code>#geo krig</code> (ett ekstra ord), <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>. Bracket-format støttes også.</p>
+              <p><strong>Resultatmodus:</strong> velg mellom <code>fragmenter / konkordans</code> og <code>opptelling</code> for flergruppesøk og geo-near.</p>
               <p><strong>Termgrupper (OR inni gruppe):</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code>. Alternativt JSON-format: <code>[["spise","spiser"],["middag"]]</code>.</p>
               <p><strong>Sequence-regel:</strong> i sequence må gruppene komme i eksakt rekkefølge og med avstand 1.</p>
               <p><strong>OR-gruppe:</strong> en enkelt gruppe som <code>[elskov, kjærlighed, forelskelse]</code> kjøres som OR-søk.</p>
