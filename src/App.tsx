@@ -179,84 +179,56 @@ function App() {
   const parseGeoQuery = (rawQuery: string): {
     terms: string[] | null;
     termGroups: string[][] | null;
-    extraTerm: string | null;
+    extraTermsText: string | null;
     invalid: boolean;
   } => {
     const trimmed = rawQuery.trim();
-    if (!/#geo/.test(trimmed)) return { terms: null, termGroups: null, extraTerm: null, invalid: false };
+    if (!/#geo/.test(trimmed)) return { terms: null, termGroups: null, extraTermsText: null, invalid: false };
 
     // If #geo appears, it must be the first expression.
     if (!trimmed.startsWith('#geo') && !trimmed.startsWith('[#geo')) {
-      return { terms: null, termGroups: null, extraTerm: null, invalid: true };
+      return { terms: null, termGroups: null, extraTermsText: null, invalid: true };
     }
 
-    // Allowed bracketed syntax:
-    // 1) [#geo]
-    // 2) [#geo] <one-extra-term>
-    // 3) [#geo:geonames:317552] (or [#geo:internal:7081]) alone
-    if (/^\[#geo\]$/.test(trimmed)) {
-      return { terms: ['#geo'], termGroups: null, extraTerm: null, invalid: false };
+    let geoToken: string | null = null;
+    let remainder = '';
+
+    const bracketedMatch = trimmed.match(/^\[(#geo(?::(?:geonames|internal):[^\]]+)?)\](?:\s+(.*))?$/);
+    if (bracketedMatch) {
+      geoToken = bracketedMatch[1];
+      remainder = (bracketedMatch[2] || '').trim();
+    } else {
+      const rawMatch = trimmed.match(/^(#geo(?::(?:geonames|internal):\S+)?)(?:\s+(.*))?$/);
+      if (rawMatch) {
+        geoToken = rawMatch[1];
+        remainder = (rawMatch[2] || '').trim();
+      }
     }
 
-    const geoPlusTermMatch = trimmed.match(/^\[#geo\]\s+(\S+)$/);
-    if (geoPlusTermMatch) {
+    if (!geoToken) {
+      return { terms: null, termGroups: null, extraTermsText: null, invalid: true };
+    }
+
+    if (!remainder) {
+      return { terms: [geoToken], termGroups: null, extraTermsText: null, invalid: false };
+    }
+
+    try {
+      const parsedGroups = parseTermGroups(remainder);
+      if (!parsedGroups || parsedGroups.length === 0) {
+        return { terms: null, termGroups: null, extraTermsText: null, invalid: true };
+      }
+
+      const extraTermsText = parsedGroups.flat().join(' ');
       return {
         terms: null,
-        termGroups: [['#geo'], [geoPlusTermMatch[1]]],
-        extraTerm: geoPlusTermMatch[1],
+        termGroups: [[geoToken], ...parsedGroups],
+        extraTermsText,
         invalid: false
       };
+    } catch {
+      return { terms: null, termGroups: null, extraTermsText: null, invalid: true };
     }
-
-    const geoNameOnlyMatch = trimmed.match(/^\[(#geo:[^\]]+)\]$/);
-    if (geoNameOnlyMatch) {
-      return { terms: [geoNameOnlyMatch[1]], termGroups: null, extraTerm: null, invalid: false };
-    }
-
-    const geoIdPlusTermMatch = trimmed.match(/^\[(#geo:(?:geonames|internal):[^\]]+)\]\s+(\S+)$/);
-    if (geoIdPlusTermMatch) {
-      return {
-        terms: null,
-        termGroups: [[geoIdPlusTermMatch[1]], [geoIdPlusTermMatch[2]]],
-        extraTerm: geoIdPlusTermMatch[2],
-        invalid: false
-      };
-    }
-
-    // Allowed unwrapped syntax (auto-wrapped by frontend):
-    // 1) #geo
-    // 2) #geo <one-extra-term>
-    // 3) #geo:geonames:317552 (or #geo:internal:7081) alone
-    if (/^#geo$/.test(trimmed)) {
-      return { terms: ['#geo'], termGroups: null, extraTerm: null, invalid: false };
-    }
-
-    const rawGeoPlusTermMatch = trimmed.match(/^#geo\s+(\S+)$/);
-    if (rawGeoPlusTermMatch) {
-      return {
-        terms: null,
-        termGroups: [['#geo'], [rawGeoPlusTermMatch[1]]],
-        extraTerm: rawGeoPlusTermMatch[1],
-        invalid: false
-      };
-    }
-
-    const rawGeoNameOnlyMatch = trimmed.match(/^(#geo:(?:geonames|internal):\S+)$/);
-    if (rawGeoNameOnlyMatch) {
-      return { terms: [rawGeoNameOnlyMatch[1]], termGroups: null, extraTerm: null, invalid: false };
-    }
-
-    const rawGeoIdPlusTermMatch = trimmed.match(/^(#geo:(?:geonames|internal):\S+)\s+(\S+)$/);
-    if (rawGeoIdPlusTermMatch) {
-      return {
-        terms: null,
-        termGroups: [[rawGeoIdPlusTermMatch[1]], [rawGeoIdPlusTermMatch[2]]],
-        extraTerm: rawGeoIdPlusTermMatch[2],
-        invalid: false
-      };
-    }
-
-    return { terms: null, termGroups: null, extraTerm: null, invalid: true };
   };
 
   const withGeoAnnotationTitles = (html: string): string => {
@@ -356,7 +328,7 @@ function App() {
     const trimmedQuery = query.trim();
     const geoQuery = parseGeoQuery(trimmedQuery);
     if (geoQuery.invalid) {
-      setStatus('Ugyldig geo-søk. Bruk #geo, #geo <ett ord>, #geo:geonames:<id>, eller #geo:internal:<id>.');
+      setStatus('Ugyldig geo-søk. Bruk #geo med valgfrie ordgrupper, eller #geo:geonames:<id> / #geo:internal:<id>.');
       setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
       return;
     }
@@ -707,7 +679,7 @@ function App() {
 
               if (annotationEl) {
                 const geoSearchTerm = annotationEl.textContent?.trim() || trimmedQuery;
-                const extraGeoTerm = geoQuery.extraTerm;
+                const extraGeoTerm = geoQuery.extraTermsText;
                 const escapedGeoTerm = geoSearchTerm.replace(/"/g, '\\"').trim();
                 const escapedExtraTerm = extraGeoTerm ? extraGeoTerm.replace(/"/g, '\\"').trim() : null;
                 const geoSearchExpression = escapedExtraTerm
@@ -949,8 +921,8 @@ function App() {
               <input
                 type="text"
                 className="form-control"
-                placeholder='f.eks. norge, "norge i krig", #geo, #geo krig, #geo:geonames:317552'
-                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo:geonames:317552 | #geo:internal:7081'
+                placeholder='f.eks. norge, "norge i krig", #geo krig, #geo [krig, slag] [skip, sjø]'
+                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo [krig, slag] [skip, sjø] | #geo:geonames:317552'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && performSearch()}
@@ -1393,7 +1365,7 @@ function App() {
               <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Frasesøk (sequence):</strong> skriv uttrykket i anførselstegn (<code>"..."</code>) for eksakt rekkefølge. Uten anførselstegn brukes nærhetssøk (<code>near</code>) som standard.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>#geo</code>, <code>#geo krig</code> (ett ekstra ord), <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>. Bracket-format støttes også.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> med valgfrie ordgrupper, for eksempel <code>#geo krig</code> eller <code>#geo [krig, slag] [skip, sjø]</code>. Du kan også bruke <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>. Bracket-format støttes også.</p>
               <p><strong>Resultatmodus:</strong> velg mellom <code>fragmenter / konkordans</code> og <code>opptelling</code> for flergruppesøk og geo-near.</p>
               <p><strong>Termgrupper (OR inni gruppe):</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code>. Alternativt JSON-format: <code>[["spise","spiser"],["middag"]]</code>.</p>
               <p><strong>Sequence-regel:</strong> i sequence må gruppene komme i eksakt rekkefølge og med avstand 1.</p>
