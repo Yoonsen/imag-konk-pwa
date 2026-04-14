@@ -30,13 +30,35 @@ interface ConcordanceRow {
   };
 }
 
+interface RenderedConcordanceRow {
+  bookId: number;
+  pos?: number;
+  frag?: string;
+}
+
 interface ConcordanceResponse {
   rows: ConcordanceRow[];
+  rendered?: RenderedConcordanceRow[];
 }
 
 interface CountResponse {
   total?: number;
   docs?: number;
+}
+
+interface PlaceResolverMatch {
+  id: string;
+  canonicalName?: string;
+  matchedForm?: string;
+  alternateForms?: string[];
+  lat?: number | string;
+  lon?: number | string;
+  country?: string;
+  matchType?: string;
+}
+
+interface PlaceResolverResponse {
+  matches?: PlaceResolverMatch[];
 }
 
 interface ModalData {
@@ -74,6 +96,7 @@ const CATEGORIES = [
 
 const MIN_YEAR = 1814;
 const MAX_YEAR = 1905;
+const PLACE_RESOLVER_URL = 'https://api.nb.no/dhlab/imag/api/place/resolve';
 
 function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
@@ -189,6 +212,55 @@ function App() {
     );
   };
 
+  const parseResolvableGeoInput = (rawQuery: string): {
+    placeText: string;
+    remainder: string;
+    bracketed: boolean;
+  } | null => {
+    const trimmed = rawQuery.trim();
+    const bracketedMatch = trimmed.match(/^\[#geo:"([^"]+)"\](?:\s+(.*))?$/);
+    if (bracketedMatch) {
+      return {
+        placeText: bracketedMatch[1].trim(),
+        remainder: (bracketedMatch[2] || '').trim(),
+        bracketed: true
+      };
+    }
+
+    const rawMatch = trimmed.match(/^#geo:"([^"]+)"(?:\s+(.*))?$/);
+    if (rawMatch) {
+      return {
+        placeText: rawMatch[1].trim(),
+        remainder: (rawMatch[2] || '').trim(),
+        bracketed: false
+      };
+    }
+
+    return null;
+  };
+
+  const buildResolvedGeoQuery = (resolvedId: string, remainder: string, bracketed: boolean): string => {
+    const safeId = resolvedId.replace(/"/g, '').trim();
+    const token = `${bracketed ? '[' : ''}#geo:"${safeId}"${bracketed ? ']' : ''}`;
+    return remainder ? `${token} ${remainder}` : token;
+  };
+
+  const resolvePlaceCandidates = async (placeText: string, limit = 5): Promise<PlaceResolverMatch[]> => {
+    const response = await fetch(PLACE_RESOLVER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: placeText, limit })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Resolver error ${response.status}: ${errorText}`);
+    }
+
+    const payload: PlaceResolverResponse = await response.json();
+    return Array.isArray(payload.matches) ? payload.matches : [];
+  };
+
   const parseGeoQuery = (rawQuery: string): {
     terms: string[] | null;
     termGroups: string[][] | null;
@@ -205,13 +277,14 @@ function App() {
 
     let geoToken: string | null = null;
     let remainder = '';
+    const geoTokenPattern = '#geo(?::(?:geonames|internal):\\S+|:"[^"]+")?';
 
-    const bracketedMatch = trimmed.match(/^\[(#geo(?::(?:geonames|internal):[^\]]+)?)\](?:\s+(.*))?$/);
+    const bracketedMatch = trimmed.match(new RegExp(`^\\[(${geoTokenPattern})\\](?:\\s+(.*))?$`));
     if (bracketedMatch) {
       geoToken = bracketedMatch[1];
       remainder = (bracketedMatch[2] || '').trim();
     } else {
-      const rawMatch = trimmed.match(/^(#geo(?::(?:geonames|internal):\S+)?)(?:\s+(.*))?$/);
+      const rawMatch = trimmed.match(new RegExp(`^(${geoTokenPattern})(?:\\s+(.*))?$`));
       if (rawMatch) {
         geoToken = rawMatch[1];
         remainder = (rawMatch[2] || '').trim();
@@ -273,6 +346,26 @@ function App() {
     });
 
     return wrapper.innerHTML;
+  };
+
+  const mergeGeoRenderedFragment = (row: ConcordanceRow, renderedFrag: string | undefined): string | null => {
+    if (!renderedFrag) return null;
+
+    const annotationHtml = row.fragHtml ? withGeoAnnotationTitles(row.fragHtml) : null;
+    if (!annotationHtml) return renderedFrag;
+
+    const candidates = [row.surfaceText, row.fragRaw, row.frag]
+      .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      .map((value) => value.trim());
+
+    for (const candidate of candidates) {
+      const bracketedCandidate = `[${candidate}]`;
+      if (renderedFrag.includes(bracketedCandidate)) {
+        return renderedFrag.replace(bracketedCandidate, `[${annotationHtml}]`);
+      }
+    }
+
+    return renderedFrag;
   };
 
   const buildNationalLibraryLink = (urn: string | undefined, searchText: string): string => {
@@ -337,35 +430,8 @@ function App() {
     }
   }, [debugEnabled]);
 
-  const performSearch = async () => {
-    const trimmedQuery = query.trim();
-    const geoQuery = parseGeoQuery(trimmedQuery);
-    if (geoQuery.invalid) {
-      setStatus('Ugyldig geo-søk. Bruk #geo med valgfrie ordgrupper, eller #geo:geonames:<id> / #geo:internal:<id>.');
-      setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
-      return;
-    }
-    const hasQuotedPhrase = /^"[^"]+"$/.test(trimmedQuery);
-    const normalizedQuery = hasQuotedPhrase ? trimmedQuery.slice(1, -1).trim() : trimmedQuery;
-    const words = normalizedQuery.split(/\s+/).filter(Boolean);
-    let parsedTermGroups: string[][] | null = null;
-    const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
-    const autoTermGroups =
-      !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 1
-        ? toSingleTermGroups(normalizedQuery)
-        : null;
-
-    if (termGroupsSource) {
-      try {
-        parsedTermGroups = parseTermGroups(termGroupsSource);
-      } catch (error) {
-        setStatus(`Invalid termGroups format: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        setResults(<p key="term-groups-error" className="error">Invalid termGroups format.</p>);
-        return;
-      }
-    }
-
-    const effectiveTermGroups = (geoQuery.terms || geoQuery.termGroups) ? null : (parsedTermGroups ?? autoTermGroups);
+  const performSearch = async (overrideQuery?: string) => {
+    let trimmedQuery = (overrideQuery ?? query).trim();
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -379,7 +445,7 @@ function App() {
       return;
     }
 
-    if (!effectiveTermGroups && !geoQuery.terms && !geoQuery.termGroups) {
+    if (!trimmedQuery) {
       alert("Please enter a search term");
       return;
     }
@@ -394,6 +460,130 @@ function App() {
     setResults(null);
 
     try {
+      const geoResolverInput = parseResolvableGeoInput(trimmedQuery);
+      if (geoResolverInput) {
+        setStatus(`Resolving place: ${geoResolverInput.placeText}...`);
+        const resolverMatches = await resolvePlaceCandidates(geoResolverInput.placeText);
+        const normalizedPlaceText = geoResolverInput.placeText.toLowerCase();
+        const exactMatches = resolverMatches.filter((match) =>
+          match.matchType === 'exact' ||
+          [match.id, match.canonicalName, match.matchedForm]
+            .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+            .some((value) => value.toLowerCase() === normalizedPlaceText)
+        );
+        const selectedMatch = exactMatches.length === 1
+          ? exactMatches[0]
+          : resolverMatches.length === 1
+            ? resolverMatches[0]
+            : exactMatches.length > 0
+              ? exactMatches[0]
+              : null;
+
+        if (!selectedMatch) {
+          setStatus(`Fant ${resolverMatches.length} stedskandidater for "${geoResolverInput.placeText}". Velg en kandidat for å fortsette.`);
+          setLastConcordanceRows([]);
+          setDebugInfo({
+            resolverQuery: geoResolverInput.placeText,
+            resolverMatches: resolverMatches.map((match) => ({
+              id: match.id,
+              canonicalName: match.canonicalName,
+              country: match.country,
+              matchType: match.matchType
+            }))
+          });
+          setResults(
+            <div className="concordance">
+              <p><strong>Mulige steder for "{geoResolverInput.placeText}"</strong></p>
+              <div className="list-group">
+                {resolverMatches.map((match) => {
+                  const nextQuery = buildResolvedGeoQuery(match.id, geoResolverInput.remainder, geoResolverInput.bracketed);
+                  const alternateForms = (match.alternateForms || []).filter(Boolean).slice(0, 5);
+                  return (
+                    <button
+                      key={`${match.id}-${match.country ?? 'unknown'}`}
+                      type="button"
+                      className="list-group-item list-group-item-action"
+                      title={`Bruk ${match.canonicalName || match.id}`}
+                      onClick={() => {
+                        setQuery(nextQuery);
+                        void performSearch(nextQuery);
+                      }}
+                    >
+                      <div className="d-flex justify-content-between align-items-start gap-3">
+                        <div className="text-start">
+                          <div className="fw-semibold">{match.canonicalName || match.id}</div>
+                          <div className="small text-muted">
+                            id: {match.id}
+                            {match.country ? ` | ${match.country}` : ''}
+                          </div>
+                        </div>
+                        {match.matchType && (
+                          <span className="badge text-bg-secondary text-uppercase">{match.matchType}</span>
+                        )}
+                      </div>
+                      {match.matchedForm && (
+                        <div className="small mt-1">
+                          <strong>Treffform:</strong> {match.matchedForm}
+                        </div>
+                      )}
+                      {(match.lat !== undefined || match.lon !== undefined) && (
+                        <div className="small text-muted">
+                          koordinater: {match.lat ?? '?'}{match.lon !== undefined ? `, ${match.lon}` : ''}
+                        </div>
+                      )}
+                      {alternateForms.length > 0 && (
+                        <div className="small text-muted">
+                          alternativer: {alternateForms.join(', ')}
+                        </div>
+                      )}
+                      <div className="small text-primary mt-1">Klikk for å bruke dette stedet</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+          return;
+        }
+
+        trimmedQuery = buildResolvedGeoQuery(selectedMatch.id, geoResolverInput.remainder, geoResolverInput.bracketed);
+        setQuery(trimmedQuery);
+      }
+
+      const geoQuery = parseGeoQuery(trimmedQuery);
+      if (geoQuery.invalid) {
+        setStatus('Ugyldig geo-søk. Bruk #geo med valgfrie ordgrupper, #geo:"stednavn", eller #geo:geonames:<id> / #geo:internal:<id>.');
+        setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
+        return;
+      }
+
+      const hasQuotedPhrase = /^"[^"]+"$/.test(trimmedQuery);
+      const normalizedQuery = hasQuotedPhrase ? trimmedQuery.slice(1, -1).trim() : trimmedQuery;
+      const words = normalizedQuery.split(/\s+/).filter(Boolean);
+      let parsedTermGroups: string[][] | null = null;
+      const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
+      const autoTermGroups =
+        !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 1
+          ? toSingleTermGroups(normalizedQuery)
+          : null;
+
+      if (termGroupsSource) {
+        try {
+          parsedTermGroups = parseTermGroups(termGroupsSource);
+        } catch (error) {
+          setStatus(`Invalid termGroups format: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          setResults(<p key="term-groups-error" className="error">Invalid termGroups format.</p>);
+          return;
+        }
+      }
+
+      const effectiveTermGroups = (geoQuery.terms || geoQuery.termGroups) ? null : (parsedTermGroups ?? autoTermGroups);
+
+      if (!effectiveTermGroups && !geoQuery.terms && !geoQuery.termGroups) {
+        alert("Please enter a search term");
+        return;
+      }
+
       // Filter URNs by selected categories, authors, and year range
       const filteredMetadata = metadataArray.filter(item => {
         const categoryMatch = selectedCategories.includes('All Categories') || 
@@ -642,15 +832,33 @@ function App() {
         ? ''
         : ` from ${yearRange[0]} to ${yearRange[1]}`;
       const rows = Array.isArray(conc.rows) ? conc.rows : [];
-      const sampledDocs = new Set(rows.map((row) => row.bookId)).size;
+      const renderedRows = Array.isArray(conc.rendered) ? conc.rendered : [];
+      const mergedRows = geoQuery.terms && renderedRows.length > 0
+        ? rows.map((row, index) => {
+            const renderedMatch = renderedRows.find((renderedRow) =>
+              renderedRow.bookId === row.bookId &&
+              renderedRow.pos === row.pos
+            ) || renderedRows[index];
+            const mergedFrag = renderedMatch?.frag;
+            const mergedFragHtml = mergeGeoRenderedFragment(row, mergedFrag);
+
+            return {
+              ...row,
+              frag: mergedFrag ?? row.frag,
+              fragRaw: mergedFrag ?? row.fragRaw,
+              fragHtml: mergedFragHtml ?? row.fragHtml
+            };
+          })
+        : rows;
+      const sampledDocs = new Set(mergedRows.map((row) => row.bookId)).size;
       const expectedSampleCap = effectiveDocSamples * effectivePerBook;
       setStatus(
-        `Found ${rows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
+        `Found ${mergedRows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
         `(sampled docs: ${sampledDocs}, cap: ${expectedSampleCap}, ${responseElapsedMs} ms)`
       );
-      setLastConcordanceRows(rows);
-      const debugPreviewMeta = rows.length > 0
-        ? metadataArray.find(item => item.id === rows[0].bookId)
+      setLastConcordanceRows(mergedRows);
+      const debugPreviewMeta = mergedRows.length > 0
+        ? metadataArray.find(item => item.id === mergedRows[0].bookId)
         : undefined;
       const debugPreviewQuery = `"${trimmedQuery}"~${normalizedNearWindow}`;
       const debugPreviewLink = debugPreviewMeta
@@ -662,7 +870,9 @@ function App() {
         usedEngine,
         isGeoQuery: !!geoQuery.terms,
         resultMode: (geoQuery.termGroups || (!!effectiveTermGroups && effectiveTermGroups.length > 1)) ? resultMode : null,
-        rows: rows.length,
+        rows: mergedRows.length,
+        renderedRows: renderedRows.length,
+        geoRenderedMergeApplied: !!geoQuery.terms && renderedRows.length > 0,
         sampledDocs,
         expectedSampleCap,
         perBook: effectivePerBook,
@@ -680,12 +890,12 @@ function App() {
         nbPreviewLink: debugPreviewLink
       });
 
-      if (rows.length === 0) {
+      if (mergedRows.length === 0) {
         setResults(<p key="no-results">No results found for this query.</p>);
         return;
       }
 
-      const newResults = rows.map((row, index) => {
+      const newResults = mergedRows.map((row, index) => {
         const textHtml = row.fragHtml ? withGeoAnnotationTitles(row.fragHtml) : null;
         const textRaw = row.fragRaw ?? row.frag ?? '';
         const metadata = metadataArray.find(item => item.id === row.bookId);
@@ -938,7 +1148,9 @@ function App() {
               <button
                 className="btn btn-primary"
                 type="button"
-                onClick={performSearch}
+                onClick={() => {
+                  void performSearch();
+                }}
                 disabled={isLoading}
                 title="Search"
               >
@@ -947,11 +1159,15 @@ function App() {
               <input
                 type="text"
                 className="form-control"
-                placeholder='f.eks. norge, "norge i krig", #geo krig, #geo [krig, slag] [skip, sjø]'
-                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo [krig, slag] [skip, sjø] | #geo:geonames:317552'
+                placeholder='f.eks. norge, "norge i krig", #geo krig, #geo:"Rio de Janeiro"'
+                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo:"Rio de Janeiro" | #geo [krig, slag] [skip, sjø] | #geo:geonames:317552'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && performSearch()}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter') {
+                    void performSearch();
+                  }
+                }}
               />
             </div>
 
@@ -1242,7 +1458,7 @@ function App() {
         <div className="modal-dialog" role="document">
           <div className="modal-content">
             <div className="modal-header">
-              <h5 className="modal-title">Sokeparametre</h5>
+              <h5 className="modal-title">Søkeparametre</h5>
               <button
                 type="button"
                 className="btn-close"
@@ -1320,7 +1536,7 @@ function App() {
                     value={wholeCorpusSampleSize}
                     onChange={(e) => setWholeCorpusSampleSize(Number(e.target.value))}
                   />
-                  <small className="text-muted">0 = av. Brukes bare i konkordans nar hele korpuset er valgt, og sender et stabilt utvalg dokument-id-er som filter.</small>
+                  <small className="text-muted">0 = av. Brukes bare i konkordans når hele korpuset er valgt, og sender et stabilt utvalg dokument-id-er som filter.</small>
                 </div>
                 <div className="col-md-6">
                   <label className="form-label">Maks visning (cutoff)</label>
@@ -1405,13 +1621,13 @@ function App() {
               </div>
               <div className="alert alert-light border py-2 mb-3">
                 <strong>Hva kan jeg søke etter?</strong><br />
-                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>, <code>#geo</code>, <code>#geo krig</code>, <code>#geo:geonames:317552</code>.
+                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>, <code>#geo</code>, <code>#geo krig</code>, <code>#geo:"Rio de Janeiro"</code>, <code>#geo:geonames:317552</code>.
               </div>
               <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>. Flere ord uten anførselstegn blir behandlet som nærhetssøk.</p>
               <p><strong>Frasesøk:</strong> skriv uttrykket i anførselstegn, for eksempel <code>"i dag"</code> eller <code>"norge i krig"</code>. Da brukes <code>sequence</code> med eksakt rekkefølge.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, eller en eksplisitt id som <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en eksplisitt id som <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>.</p>
               <p><strong>Resultatmodus:</strong> <code>Konk</code> viser fragmenter og konkordanser. <code>Telling</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
               <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
