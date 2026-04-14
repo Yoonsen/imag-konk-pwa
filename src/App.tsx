@@ -88,6 +88,7 @@ function App() {
   const [afterWindow, setAfterWindow] = useState<number>(15);
   const [perBook, setPerBook] = useState<number>(3);
   const [docSamples, setDocSamples] = useState<number>(50);
+  const [wholeCorpusSampleSize, setWholeCorpusSampleSize] = useState<number>(1000);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [resultMode, setResultMode] = useState<'render' | 'count'>('render');
@@ -174,6 +175,18 @@ function App() {
       .split(/\s+/)
       .filter(Boolean)
       .map((token) => [token]);
+  };
+
+  const sampleDocumentIds = (ids: number[], sampleSize: number): number[] => {
+    const normalizedSampleSize = Math.max(0, Math.floor(sampleSize) || 0);
+    if (normalizedSampleSize === 0 || ids.length <= normalizedSampleSize) {
+      return ids;
+    }
+
+    return Array.from(
+      { length: normalizedSampleSize },
+      (_, index) => ids[Math.floor((index * ids.length) / normalizedSampleSize)]
+    );
   };
 
   const parseGeoQuery = (rawQuery: string): {
@@ -407,12 +420,21 @@ function App() {
         selectedAuthors.length > 0 ||
         yearRange[0] !== MIN_YEAR ||
         yearRange[1] !== MAX_YEAR;
-      const effectiveFilterIds = persistentFilterIds
+      const baseFilterIds = persistentFilterIds
         ? (hasFilterModalConstraints ? filterIds : persistentFilterIds)
         : filterIds;
-      const useFilter = persistentFilterIds
+      const normalizedWholeCorpusSampleSize = Math.max(0, Math.floor(wholeCorpusSampleSize) || 0);
+      const shouldSampleWholeCorpus =
+        !persistentFilterIds &&
+        !hasFilterModalConstraints &&
+        resultMode === 'render' &&
+        normalizedWholeCorpusSampleSize > 0;
+      const effectiveFilterIds = shouldSampleWholeCorpus
+        ? sampleDocumentIds(baseFilterIds, normalizedWholeCorpusSampleSize)
+        : baseFilterIds;
+      const useFilter = shouldSampleWholeCorpus || (persistentFilterIds
         ? effectiveFilterIds.length > 0
-        : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length);
+        : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length));
       const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
@@ -427,8 +449,8 @@ function App() {
       const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
       const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
 
-      // Fast profile for inline term-groups to keep latency low during interactive searching.
-      const effectivePerBook = usesFastNearProfile ? Math.min(normalizedPerBook, 2) : normalizedPerBook;
+      // Keep the user-selected per-book sample count; only trim broader cost drivers below.
+      const effectivePerBook = normalizedPerBook;
       const effectiveDocSamples = normalizedDocSamples;
       const effectiveTotalLimit = usesFastNearProfile ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
       const effectiveMaxVariants = usesFastNearProfile ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
@@ -600,6 +622,8 @@ function App() {
           total,
           docs,
           responseMs: responseElapsedMs,
+          wholeCorpusSamplingApplied: shouldSampleWholeCorpus,
+          sampledCorpusDocs: shouldSampleWholeCorpus ? effectiveFilterIds.length : null,
           filteredDocs: filteredMetadata.length,
           useFilter,
           filterIdsCount: useFilter ? effectiveFilterIds.length : 0
@@ -643,6 +667,8 @@ function App() {
         expectedSampleCap,
         perBook: effectivePerBook,
         docSamples: effectiveDocSamples,
+        wholeCorpusSamplingApplied: shouldSampleWholeCorpus,
+        sampledCorpusDocs: shouldSampleWholeCorpus ? effectiveFilterIds.length : null,
         responseMs: responseElapsedMs,
         fastProfileApplied: usesFastNearProfile,
         matchMode: endpointPath === "near_fragments" ? effectiveMatchMode : null,
@@ -930,6 +956,25 @@ function App() {
             </div>
 
             <div className="d-flex flex-wrap flex-md-nowrap align-items-start gap-1">
+              <div className="btn-group" role="group" aria-label="Result mode actions">
+                <button
+                  className={`btn ${resultMode === 'render' ? 'btn-secondary' : 'btn-outline-secondary'}`}
+                  type="button"
+                  onClick={() => setResultMode('render')}
+                  title="Vis fragmenter og konkordanser"
+                >
+                  Konk
+                </button>
+                <button
+                  className={`btn ${resultMode === 'count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
+                  type="button"
+                  onClick={() => setResultMode('count')}
+                  title="Vis telling for flergruppesøk"
+                >
+                  Telling
+                </button>
+              </div>
+
               <div className="btn-group" role="group" aria-label="Korpus actions">
                 <button 
                   className="btn btn-outline-secondary"
@@ -1266,6 +1311,18 @@ function App() {
                   />
                 </div>
                 <div className="col-md-6">
+                  <label className="form-label">Korpussample ved hele korpuset</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={0}
+                    step={1}
+                    value={wholeCorpusSampleSize}
+                    onChange={(e) => setWholeCorpusSampleSize(Number(e.target.value))}
+                  />
+                  <small className="text-muted">0 = av. Brukes bare i konkordans nar hele korpuset er valgt, og sender et stabilt utvalg dokument-id-er som filter.</small>
+                </div>
+                <div className="col-md-6">
                   <label className="form-label">Maks visning (cutoff)</label>
                   <input
                     type="number"
@@ -1286,18 +1343,6 @@ function App() {
                     value={maxVariants}
                     onChange={(e) => setMaxVariants(Number(e.target.value))}
                   />
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Resultatmodus</label>
-                  <select
-                    className="form-select"
-                    value={resultMode}
-                    onChange={(e) => setResultMode(e.target.value as 'render' | 'count')}
-                  >
-                    <option value="render">fragmenter / konkordans</option>
-                    <option value="count">opptelling</option>
-                  </select>
-                  <small className="text-muted">Gjelder flergruppesøk og geo-near. Bruk count for rask skipgramtelling.</small>
                 </div>
                 <div className="col-12">
                   <label className="form-label">Term groups JSON (optional)</label>
@@ -1356,23 +1401,21 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="alert alert-info py-2 mb-3">
-                Denne hjelpeteksten utvides fortløpende etter hvert som ny funksjonalitet kommer.
+                Skriv i søkefeltet og velg mellom <code>Konk</code> og <code>Telling</code> i knapperaden.
               </div>
               <div className="alert alert-light border py-2 mb-3">
                 <strong>Hva kan jeg søke etter?</strong><br />
-                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>.
+                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>, <code>#geo</code>, <code>#geo krig</code>, <code>#geo:geonames:317552</code>.
               </div>
-              <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>.</p>
+              <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>. Flere ord uten anførselstegn blir behandlet som nærhetssøk.</p>
+              <p><strong>Frasesøk:</strong> skriv uttrykket i anførselstegn, for eksempel <code>"i dag"</code> eller <code>"norge i krig"</code>. Da brukes <code>sequence</code> med eksakt rekkefølge.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
-              <p><strong>Frasesøk (sequence):</strong> skriv uttrykket i anførselstegn (<code>"..."</code>) for eksakt rekkefølge. Uten anførselstegn brukes nærhetssøk (<code>near</code>) som standard.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> med valgfrie ordgrupper, for eksempel <code>#geo krig</code> eller <code>#geo [krig, slag] [skip, sjø]</code>. Du kan også bruke <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>. Bracket-format støttes også.</p>
-              <p><strong>Resultatmodus:</strong> velg mellom <code>fragmenter / konkordans</code> og <code>opptelling</code> for flergruppesøk og geo-near.</p>
-              <p><strong>Termgrupper (OR inni gruppe):</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code>. Alternativt JSON-format: <code>[["spise","spiser"],["middag"]]</code>.</p>
-              <p><strong>Sequence-regel:</strong> i sequence må gruppene komme i eksakt rekkefølge og med avstand 1.</p>
-              <p><strong>OR-gruppe:</strong> en enkelt gruppe som <code>[elskov, kjærlighed, forelskelse]</code> kjøres som OR-søk.</p>
-              <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år.</p>
-              <p><strong>Søkeparametre:</strong> <code>window</code> = maks avstand mellom søkegrupper i trefflogikken; <code>before / after</code> = hvor mye kontekst som vises i utdrag.</p>
-              <p><strong>Teknisk status:</strong> near-kall kjøres midlertidig med Python-engine.</p>
+              <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, eller en eksplisitt id som <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>.</p>
+              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser fragmenter og konkordanser. <code>Telling</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
+              <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
+              <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
+              <p><strong>Store søk:</strong> backend håndterer nå store korpus bedre. Konkordans er fortsatt et utvalg av treff, mens telling kan gå bredere.</p>
             </div>
             <div className="modal-footer">
               <button
