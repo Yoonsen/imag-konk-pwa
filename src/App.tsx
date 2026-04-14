@@ -1101,20 +1101,18 @@ function App() {
     author.toLowerCase().includes(authorSearch.toLowerCase())
   ).slice(0, 10); // Limit to 10 suggestions
 
-  const handleCategoryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const options = e.target.options;
-    const selectedValues: string[] = [];
-    for (let i = 0; i < options.length; i++) {
-      if (options[i].selected) {
-        selectedValues.push(options[i].value);
-      }
-    }
-    
-    if (selectedValues.includes('All Categories')) {
+  const handleCategoryToggle = (category: string) => {
+    if (category === 'All Categories') {
       setSelectedCategories(['All Categories']);
-    } else {
-      setSelectedCategories(selectedValues);
+      return;
     }
+
+    const withoutAll = selectedCategories.filter((value) => value !== 'All Categories');
+    const nextCategories = withoutAll.includes(category)
+      ? withoutAll.filter((value) => value !== category)
+      : [...withoutAll, category];
+
+    setSelectedCategories(nextCategories.length > 0 ? nextCategories : ['All Categories']);
   };
 
   const handleYearRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1389,21 +1387,28 @@ function App() {
 
               <div className="mb-4">
                 <label className="form-label">Categories</label>
-                <select 
-                  className="form-select" 
-                  multiple
-                  value={selectedCategories}
-                  onChange={handleCategoryChange}
-                  size={5}
-                >
-                  {CATEGORIES.map((category, index) => (
-                    <option key={index} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
+                <div className="category-filter-list border rounded p-2">
+                  {CATEGORIES.map((category, index) => {
+                    const checked = selectedCategories.includes(category);
+                    const categoryId = `category-filter-${index}`;
+                    return (
+                      <div className="form-check mb-2" key={category}>
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id={categoryId}
+                          checked={checked}
+                          onChange={() => handleCategoryToggle(category)}
+                        />
+                        <label className="form-check-label" htmlFor={categoryId}>
+                          {category}
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
                 <small className="text-muted d-block mt-1">
-                  Hold Ctrl/Cmd to select multiple categories
+                  Trykk for å velge en eller flere kategorier.
                 </small>
               </div>
 

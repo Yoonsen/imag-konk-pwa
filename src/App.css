@@ -48,6 +48,16 @@
   border-radius: 4px;
 }
 
+.category-filter-list {
+  max-height: 240px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.category-filter-list .form-check:last-child {
+  margin-bottom: 0 !important;
+}
+
 #metadata-tooltip {
   position: absolute;
   background-color: #fff;
