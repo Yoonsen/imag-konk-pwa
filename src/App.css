@@ -58,24 +58,6 @@
   margin-bottom: 0 !important;
 }
 
-.annotate-slider-panel {
-  min-width: 180px;
-  background-color: #f8f9fa;
-}
-
-.annotate-slider-panel .form-range {
-  min-width: 140px;
-}
-
-.annotated-dataframe {
-  border-top: 1px solid #eee;
-  padding-top: 12px;
-}
-
-.annotated-dataframe table {
-  margin-bottom: 0;
-}
-
 #metadata-tooltip {
   position: absolute;
   background-color: #fff;

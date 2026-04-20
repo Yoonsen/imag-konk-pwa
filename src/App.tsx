@@ -117,7 +117,6 @@ function App() {
   const [nearWindow, setNearWindow] = useState<number>(5);
   const [beforeWindow, setBeforeWindow] = useState<number>(15);
   const [afterWindow, setAfterWindow] = useState<number>(15);
-  const [annotateSampleSize, setAnnotateSampleSize] = useState<number>(50);
   const [perBook, setPerBook] = useState<number>(3);
   const [docSamples, setDocSamples] = useState<number>(50);
   const [totalLimit, setTotalLimit] = useState<number>(200);
@@ -207,18 +206,6 @@ function App() {
       .split(/\s+/)
       .filter(Boolean)
       .map((token) => [token]);
-  };
-
-  const sampleRows = <T,>(rows: T[], sampleSize: number): T[] => {
-    const normalizedSampleSize = Math.max(0, Math.floor(sampleSize) || 0);
-    if (normalizedSampleSize === 0 || rows.length <= normalizedSampleSize) {
-      return rows;
-    }
-
-    return Array.from(
-      { length: normalizedSampleSize },
-      (_, index) => rows[Math.floor((index * rows.length) / normalizedSampleSize)]
-    );
   };
 
   const parseResolvableGeoInput = (rawQuery: string): {
@@ -900,12 +887,11 @@ function App() {
             };
           })
         : rows;
-      const displayedRows = sampleRows(mergedRows, effectiveAnnotateSampleSize);
       const sampledDocs = new Set(mergedRows.map((row) => row.bookId)).size;
       const expectedSampleCap = effectiveDocSamples * effectivePerBook;
       setStatus(
         `Found ${mergedRows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
-        `(viser ${displayedRows.length} annoteringsrader, sampled docs: ${sampledDocs}, cap: ${expectedSampleCap}, ${responseElapsedMs} ms)`
+        `(sampled docs: ${sampledDocs}, cap: ${expectedSampleCap}, ${responseElapsedMs} ms)`
       );
       setLastConcordanceRows(mergedRows);
       setLastRenderContext({
@@ -933,8 +919,6 @@ function App() {
         geoRenderedMergeApplied: !!geoQuery.terms && renderedRows.length > 0,
         geoFallbackApplied,
         geoTokenUsed: activeGeoToken,
-        annotateSampleSize: effectiveAnnotateSampleSize,
-        annotateRowsShown: displayedRows.length,
         sampledDocs,
         expectedSampleCap,
         perBook: effectivePerBook,
@@ -1053,16 +1037,12 @@ function App() {
   };
 
   const handleDownloadConcordance = () => {
-    const rowsForExport = lastRenderContext
-      ? sampleRows(lastConcordanceRows, effectiveAnnotateSampleSize)
-      : lastConcordanceRows;
-
-    if (rowsForExport.length === 0) {
+    if (lastConcordanceRows.length === 0) {
       alert('No concordance results to download yet.');
       return;
     }
 
-    const rows = rowsForExport.map((row) => {
+    const rows = lastConcordanceRows.map((row) => {
       const metadata = metadataArray.find((item) => item.id === row.bookId);
       return {
         dhlabid: row.bookId,
@@ -1139,12 +1119,6 @@ function App() {
     }
   };
 
-  const annotateSliderMax = Math.max(10, totalLimit);
-  const effectiveAnnotateSampleSize = Math.max(10, Math.min(annotateSampleSize, annotateSliderMax));
-  const annotatedRows = lastRenderContext
-    ? sampleRows(lastConcordanceRows, effectiveAnnotateSampleSize)
-    : [];
-
   const buildConcordanceResults = (rows: ConcordanceRow[], context: RenderResultContext): React.ReactNode[] => {
     return rows.map((row, index) => {
       const textHtml = row.fragHtml ? withGeoAnnotationTitles(row.fragHtml) : null;
@@ -1194,45 +1168,6 @@ function App() {
       );
     });
   };
-
-  const buildAnnotatedDataframe = (rows: ConcordanceRow[]): React.ReactNode => (
-    <div className="annotated-dataframe mt-4">
-      <div className="d-flex justify-content-between align-items-center mb-2">
-        <h2 className="h6 mb-0">Slutt-tabell</h2>
-        <small className="text-muted">
-          Viser {rows.length} av {lastConcordanceRows.length} rader
-        </small>
-      </div>
-      <div className="table-responsive">
-        <table className="table table-sm table-striped align-middle">
-          <thead>
-            <tr>
-              <th scope="col">dhlabid</th>
-              <th scope="col">Tittel</th>
-              <th scope="col">Forfatter</th>
-              <th scope="col">År</th>
-              <th scope="col">Fragment</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row, index) => {
-              const metadata = metadataArray.find((item) => item.id === row.bookId);
-              const fragmentText = row.fragRaw ?? row.frag ?? row.surfaceText ?? '';
-              return (
-                <tr key={`${row.bookId}-${row.pos ?? row.seqStart ?? index}`}>
-                  <td>{row.bookId}</td>
-                  <td>{metadata?.title ?? ''}</td>
-                  <td>{metadata?.author ?? ''}</td>
-                  <td>{metadata?.year ?? ''}</td>
-                  <td className="text-break">{fragmentText}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
 
   return (
     <div className="container my-4">
@@ -1285,9 +1220,9 @@ function App() {
                   className={`btn ${resultMode === 'render' ? 'btn-secondary' : 'btn-outline-secondary'}`}
                   type="button"
                   onClick={() => setResultMode('render')}
-                  title="Vis annotering og konkordanser"
+                  title="Vis konkordanser"
                 >
-                  Annoter
+                  Konk
                 </button>
                 <button
                   className={`btn ${resultMode === 'count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
@@ -1295,26 +1230,9 @@ function App() {
                   onClick={() => setResultMode('count')}
                   title="Vis telling for flergruppesøk"
                 >
-                  Telling
+                  Tell
                 </button>
               </div>
-              {resultMode === 'render' && (
-                <div className="annotate-slider-panel border rounded px-2 py-1">
-                  <div className="small fw-semibold">
-                    Annoter: {effectiveAnnotateSampleSize >= annotateSliderMax ? 'alle' : `${effectiveAnnotateSampleSize} rader`}
-                  </div>
-                  <input
-                    type="range"
-                    className="form-range mb-0"
-                    min={10}
-                    max={annotateSliderMax}
-                    step={1}
-                    value={effectiveAnnotateSampleSize}
-                    onChange={(e) => setAnnotateSampleSize(Number(e.target.value))}
-                    title="Velg hvor mange rader som skal brukes i annotering"
-                  />
-                </div>
-              )}
 
               <div className="btn-group" role="group" aria-label="Korpus actions">
                 <button 
@@ -1408,13 +1326,12 @@ function App() {
             </div>
           </div>
         )}
-        {lastRenderContext && annotatedRows.length > 0 ? (
+        {lastRenderContext && lastConcordanceRows.length > 0 ? (
           <>
             <div className="small text-muted mb-2">
-              Annoter viser et sample av treffradene. Juster slideren over for å endre utvalget.
+              Konk viser treffene som er hentet ut med innstillingene i verktøymenyen. Trykk på en konkordans for bokinfo og lenke til Nettbiblioteket.
             </div>
-            {buildConcordanceResults(annotatedRows, lastRenderContext)}
-            {buildAnnotatedDataframe(annotatedRows)}
+            {buildConcordanceResults(lastConcordanceRows, lastRenderContext)}
           </>
         ) : (
           results
@@ -1747,7 +1664,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="alert alert-info py-2 mb-3">
-                Skriv i søkefeltet og velg mellom <code>Annoter</code> og <code>Telling</code> i knapperaden.
+                Skriv i søkefeltet og velg mellom <code>Konk</code> og <code>Tell</code> i knapperaden.
               </div>
               <div className="alert alert-light border py-2 mb-3">
                 <strong>Hva kan jeg søke etter?</strong><br />
@@ -1758,11 +1675,11 @@ function App() {
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
               <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en NB-steds-id som <code>#geo:1032414</code>. Ved behov prøver appen også <code>#geo:nb:1032414</code>.</p>
-              <p><strong>Resultatmodus:</strong> <code>Annoter</code> viser konkordanser og en slutt-tabell for et valgt sample av rader. <code>Telling</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
+              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
               <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
-              <p><strong>Annoter-sample:</strong> slideren i topplinjen velger hvor mange rader som tas med i annotering og i slutt-tabellen.</p>
-              <p><strong>Store søk:</strong> annotering viser et sample av treffradene, mens telling kan gå bredere.</p>
+              <p><strong>Treffmengde:</strong> bruk <code>Samples per book</code>, <code>doc_samples</code> og <code>Maks visning</code> i verktøymenyen for å styre hvor mange treff Konk viser.</p>
+              <p><strong>Store søk:</strong> Konk følger treffutvalget fra verktøymenyen, mens Tell kan gå bredere.</p>
             </div>
             <div className="modal-footer">
               <button
