@@ -61,6 +61,14 @@ interface PlaceResolverResponse {
   matches?: PlaceResolverMatch[];
 }
 
+interface RenderResultContext {
+  trimmedQuery: string;
+  normalizedBefore: number;
+  normalizedAfter: number;
+  normalizedNearWindow: number;
+  extraGeoTermsText: string | null;
+}
+
 interface ModalData {
   title: string;
   author: string;
@@ -109,9 +117,9 @@ function App() {
   const [nearWindow, setNearWindow] = useState<number>(5);
   const [beforeWindow, setBeforeWindow] = useState<number>(15);
   const [afterWindow, setAfterWindow] = useState<number>(15);
+  const [annotateSampleSize, setAnnotateSampleSize] = useState<number>(50);
   const [perBook, setPerBook] = useState<number>(3);
   const [docSamples, setDocSamples] = useState<number>(50);
-  const [wholeCorpusSampleSize, setWholeCorpusSampleSize] = useState<number>(1000);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [resultMode, setResultMode] = useState<'render' | 'count'>('render');
@@ -126,6 +134,7 @@ function App() {
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
+  const [lastRenderContext, setLastRenderContext] = useState<RenderResultContext | null>(null);
   const [persistentFilterIds, setPersistentFilterIds] = useState<number[] | null>(null);
   const [debugEnabled, setDebugEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -200,15 +209,15 @@ function App() {
       .map((token) => [token]);
   };
 
-  const sampleDocumentIds = (ids: number[], sampleSize: number): number[] => {
+  const sampleRows = <T,>(rows: T[], sampleSize: number): T[] => {
     const normalizedSampleSize = Math.max(0, Math.floor(sampleSize) || 0);
-    if (normalizedSampleSize === 0 || ids.length <= normalizedSampleSize) {
-      return ids;
+    if (normalizedSampleSize === 0 || rows.length <= normalizedSampleSize) {
+      return rows;
     }
 
     return Array.from(
       { length: normalizedSampleSize },
-      (_, index) => ids[Math.floor((index * ids.length) / normalizedSampleSize)]
+      (_, index) => rows[Math.floor((index * rows.length) / normalizedSampleSize)]
     );
   };
 
@@ -241,7 +250,8 @@ function App() {
 
   const buildResolvedGeoQuery = (resolvedId: string, remainder: string, bracketed: boolean): string => {
     const safeId = resolvedId.replace(/"/g, '').trim();
-    const token = `${bracketed ? '[' : ''}#geo:"${safeId}"${bracketed ? ']' : ''}`;
+    const tokenValue = /^\d+$/.test(safeId) ? `#geo:${safeId}` : `#geo:"${safeId}"`;
+    const token = `${bracketed ? '[' : ''}${tokenValue}${bracketed ? ']' : ''}`;
     return remainder ? `${token} ${remainder}` : token;
   };
 
@@ -277,7 +287,7 @@ function App() {
 
     let geoToken: string | null = null;
     let remainder = '';
-    const geoTokenPattern = '#geo(?::(?:geonames|internal):\\S+|:"[^"]+")?';
+    const geoTokenPattern = '#geo(?::(?:nb:)?\\d+|:(?:geonames|internal):\\S+|:"[^"]+")?';
 
     const bracketedMatch = trimmed.match(new RegExp(`^\\[(${geoTokenPattern})\\](?:\\s+(.*))?$`));
     if (bracketedMatch) {
@@ -315,6 +325,20 @@ function App() {
     } catch {
       return { terms: null, termGroups: null, extraTermsText: null, invalid: true };
     }
+  };
+
+  const getNbGeoFallbackToken = (token: string): string | null => {
+    const primaryMatch = token.match(/^#geo:(\d+)$/);
+    if (primaryMatch) {
+      return `#geo:nb:${primaryMatch[1]}`;
+    }
+
+    const prefixedMatch = token.match(/^#geo:nb:(\d+)$/);
+    if (prefixedMatch) {
+      return `#geo:${prefixedMatch[1]}`;
+    }
+
+    return null;
   };
 
   const withGeoAnnotationTitles = (html: string): string => {
@@ -458,6 +482,8 @@ function App() {
     setIsLoading(true);
     setStatus("Searching...");
     setResults(null);
+    setLastConcordanceRows([]);
+    setLastRenderContext(null);
 
     try {
       const geoResolverInput = parseResolvableGeoInput(trimmedQuery);
@@ -552,7 +578,7 @@ function App() {
 
       const geoQuery = parseGeoQuery(trimmedQuery);
       if (geoQuery.invalid) {
-        setStatus('Ugyldig geo-søk. Bruk #geo med valgfrie ordgrupper, #geo:"stednavn", eller #geo:geonames:<id> / #geo:internal:<id>.');
+        setStatus('Ugyldig geo-søk. Bruk #geo med valgfrie ordgrupper, #geo:"stednavn", eller #geo:<nb_id> / #geo:nb:<nb_id>.');
         setResults(<p key="geo-format-error" className="error">Ugyldig geo-format.</p>);
         return;
       }
@@ -613,24 +639,19 @@ function App() {
       const baseFilterIds = persistentFilterIds
         ? (hasFilterModalConstraints ? filterIds : persistentFilterIds)
         : filterIds;
-      const normalizedWholeCorpusSampleSize = Math.max(0, Math.floor(wholeCorpusSampleSize) || 0);
-      const shouldSampleWholeCorpus =
-        !persistentFilterIds &&
-        !hasFilterModalConstraints &&
-        resultMode === 'render' &&
-        normalizedWholeCorpusSampleSize > 0;
-      const effectiveFilterIds = shouldSampleWholeCorpus
-        ? sampleDocumentIds(baseFilterIds, normalizedWholeCorpusSampleSize)
-        : baseFilterIds;
-      const useFilter = shouldSampleWholeCorpus || (persistentFilterIds
+      const effectiveFilterIds = baseFilterIds;
+      const useFilter = persistentFilterIds
         ? effectiveFilterIds.length > 0
-        : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length));
+        : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length);
       const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
+      const normalizedOrQueryBefore = Math.max(1, normalizedBefore);
+      const normalizedOrQueryAfter = Math.max(1, normalizedAfter);
       const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
       const normalizedDocSamples = Math.max(0, Math.floor(docSamples) || 0);
       const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
+      const normalizedOrQueryTotalLimit = Math.min(normalizedTotalLimit, 5000);
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
       const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
@@ -674,10 +695,10 @@ function App() {
         : geoQuery.terms
         ? {
             terms: geoQuery.terms,
-            before: normalizedBefore,
-            after: normalizedAfter,
+            before: normalizedOrQueryBefore,
+            after: normalizedOrQueryAfter,
             docSamples: effectiveDocSamples,
-            totalLimit: effectiveTotalLimit,
+            totalLimit: normalizedOrQueryTotalLimit,
             useFilter,
             filterIds: useFilter ? effectiveFilterIds : [],
             renderHits: true
@@ -719,11 +740,11 @@ function App() {
         : endpointPath === "or_query"
           ? {
               termGroups: effectiveTermGroups,
-              before: normalizedBefore,
-              after: normalizedAfter,
+              before: normalizedOrQueryBefore,
+              after: normalizedOrQueryAfter,
               perBook: effectivePerBook,
               docSamples: effectiveDocSamples,
-              totalLimit: effectiveTotalLimit,
+              totalLimit: normalizedOrQueryTotalLimit,
               schema: "unigrams",
               useFilter,
               filterIds: useFilter ? effectiveFilterIds : [],
@@ -738,17 +759,35 @@ function App() {
       setDebugRequest({
         endpoint: endpointPath,
         ...requestBody,
+        geoFallbackCandidate: geoQuery.terms && geoQuery.terms.length === 1 ? getNbGeoFallbackToken(geoQuery.terms[0]) : null,
         filterIds: `[${useFilter ? effectiveFilterIds.length : 0} ids]`
       });
 
       const requestStartedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const usedEngine = endpointPath === "near_fragments" ? "python" : null;
-
-      const concResp = await fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
+      const runSearchRequest = (body: Record<string, unknown>) => fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(body)
       });
+      const buildFallbackRequestBody = (token: string): typeof requestBody => ({
+        ...requestBody,
+        terms: [token]
+      } as typeof requestBody);
+      const fallbackGeoToken = geoQuery.terms && geoQuery.terms.length === 1
+        ? getNbGeoFallbackToken(geoQuery.terms[0])
+        : null;
+      let activeRequestBody: typeof requestBody = requestBody;
+      let activeGeoToken = geoQuery.terms?.[0] ?? null;
+      let geoFallbackApplied = false;
+
+      let concResp = await runSearchRequest(activeRequestBody);
+      if (!concResp.ok && concResp.status === 404 && fallbackGeoToken && activeGeoToken !== fallbackGeoToken) {
+        activeRequestBody = buildFallbackRequestBody(fallbackGeoToken);
+        activeGeoToken = fallbackGeoToken;
+        geoFallbackApplied = true;
+        concResp = await runSearchRequest(activeRequestBody);
+      }
 
       if (!concResp.ok) {
         const errorText = await concResp.text();
@@ -812,8 +851,6 @@ function App() {
           total,
           docs,
           responseMs: responseElapsedMs,
-          wholeCorpusSamplingApplied: shouldSampleWholeCorpus,
-          sampledCorpusDocs: shouldSampleWholeCorpus ? effectiveFilterIds.length : null,
           filteredDocs: filteredMetadata.length,
           useFilter,
           filterIdsCount: useFilter ? effectiveFilterIds.length : 0
@@ -821,7 +858,20 @@ function App() {
         return;
       }
 
-      const conc: ConcordanceResponse = await concResp.json();
+      let conc: ConcordanceResponse = await concResp.json();
+      if (geoQuery.terms && !geoFallbackApplied && fallbackGeoToken && activeGeoToken !== fallbackGeoToken) {
+        const currentRows = Array.isArray(conc.rows) ? conc.rows : [];
+        const currentRenderedRows = Array.isArray(conc.rendered) ? conc.rendered : [];
+        if (currentRows.length === 0 && currentRenderedRows.length === 0) {
+          activeRequestBody = buildFallbackRequestBody(fallbackGeoToken);
+          activeGeoToken = fallbackGeoToken;
+          geoFallbackApplied = true;
+          const fallbackResp = await runSearchRequest(activeRequestBody);
+          if (fallbackResp.ok) {
+            conc = await fallbackResp.json();
+          }
+        }
+      }
       const categoryText = selectedCategories.includes('All Categories') 
         ? '' 
         : ` in categories: ${selectedCategories.join(', ')}`;
@@ -850,13 +900,21 @@ function App() {
             };
           })
         : rows;
+      const displayedRows = sampleRows(mergedRows, effectiveAnnotateSampleSize);
       const sampledDocs = new Set(mergedRows.map((row) => row.bookId)).size;
       const expectedSampleCap = effectiveDocSamples * effectivePerBook;
       setStatus(
         `Found ${mergedRows.length} results for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
-        `(sampled docs: ${sampledDocs}, cap: ${expectedSampleCap}, ${responseElapsedMs} ms)`
+        `(viser ${displayedRows.length} annoteringsrader, sampled docs: ${sampledDocs}, cap: ${expectedSampleCap}, ${responseElapsedMs} ms)`
       );
       setLastConcordanceRows(mergedRows);
+      setLastRenderContext({
+        trimmedQuery,
+        normalizedBefore,
+        normalizedAfter,
+        normalizedNearWindow,
+        extraGeoTermsText: geoQuery.extraTermsText
+      });
       const debugPreviewMeta = mergedRows.length > 0
         ? metadataArray.find(item => item.id === mergedRows[0].bookId)
         : undefined;
@@ -873,12 +931,14 @@ function App() {
         rows: mergedRows.length,
         renderedRows: renderedRows.length,
         geoRenderedMergeApplied: !!geoQuery.terms && renderedRows.length > 0,
+        geoFallbackApplied,
+        geoTokenUsed: activeGeoToken,
+        annotateSampleSize: effectiveAnnotateSampleSize,
+        annotateRowsShown: displayedRows.length,
         sampledDocs,
         expectedSampleCap,
         perBook: effectivePerBook,
         docSamples: effectiveDocSamples,
-        wholeCorpusSamplingApplied: shouldSampleWholeCorpus,
-        sampledCorpusDocs: shouldSampleWholeCorpus ? effectiveFilterIds.length : null,
         responseMs: responseElapsedMs,
         fastProfileApplied: usesFastNearProfile,
         matchMode: endpointPath === "near_fragments" ? effectiveMatchMode : null,
@@ -894,56 +954,7 @@ function App() {
         setResults(<p key="no-results">No results found for this query.</p>);
         return;
       }
-
-      const newResults = mergedRows.map((row, index) => {
-        const textHtml = row.fragHtml ? withGeoAnnotationTitles(row.fragHtml) : null;
-        const textRaw = row.fragRaw ?? row.frag ?? '';
-        const metadata = metadataArray.find(item => item.id === row.bookId);
-        const nbProximity = Math.max(normalizedBefore, normalizedAfter);
-        const baseSearchExpression = `"${trimmedQuery}"~${nbProximity}`;
-        const baseUrnLink = buildNationalLibraryLink(metadata?.urn, baseSearchExpression);
-
-        return (
-          <div 
-            key={index} 
-            className="concordance"
-            data-book-id={row.bookId}
-            onClick={(event) => {
-              if (!metadata) return;
-              const target = event.target as HTMLElement;
-              const annotationEl = target.closest('annotation[data-layer="geo"]') as HTMLElement | null;
-
-              if (annotationEl) {
-                const geoSearchTerm = annotationEl.textContent?.trim() || trimmedQuery;
-                const extraGeoTerm = geoQuery.extraTermsText;
-                const escapedGeoTerm = geoSearchTerm.replace(/"/g, '\\"').trim();
-                const escapedExtraTerm = extraGeoTerm ? extraGeoTerm.replace(/"/g, '\\"').trim() : null;
-                const geoSearchExpression = escapedExtraTerm
-                  ? `"${escapedGeoTerm} ${escapedExtraTerm}"~${normalizedNearWindow}`
-                  : escapedGeoTerm;
-                const geoUrnLink = buildNationalLibraryLink(metadata.urn, geoSearchExpression);
-                handleConcordanceClick(metadata, geoUrnLink);
-                return;
-              }
-
-              handleConcordanceClick(metadata, baseUrnLink);
-            }}
-          >
-            {debugEnabled && (
-              <div className="text-muted" style={{ fontSize: "11px" }}>
-                dhlabid: {row.bookId}
-              </div>
-            )}
-            {textHtml
-              ? <p dangerouslySetInnerHTML={{ __html: textHtml }} />
-              : textRaw
-                ? <p>{textRaw}</p>
-                : <p className="text-muted fst-italic">Ingen fragmenttekst fra backend.</p>}
-          </div>
-        );
-      });
-
-      setResults(newResults);
+      setResults(null);
     } catch (error) {
       setStatus(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setResults(<p key="error" className="error">Search failed: {error instanceof Error ? error.message : 'Unknown error'}</p>);
@@ -1042,12 +1053,16 @@ function App() {
   };
 
   const handleDownloadConcordance = () => {
-    if (lastConcordanceRows.length === 0) {
+    const rowsForExport = lastRenderContext
+      ? sampleRows(lastConcordanceRows, effectiveAnnotateSampleSize)
+      : lastConcordanceRows;
+
+    if (rowsForExport.length === 0) {
       alert('No concordance results to download yet.');
       return;
     }
 
-    const rows = lastConcordanceRows.map((row) => {
+    const rows = rowsForExport.map((row) => {
       const metadata = metadataArray.find((item) => item.id === row.bookId);
       return {
         dhlabid: row.bookId,
@@ -1124,6 +1139,101 @@ function App() {
     }
   };
 
+  const annotateSliderMax = Math.max(10, totalLimit);
+  const effectiveAnnotateSampleSize = Math.max(10, Math.min(annotateSampleSize, annotateSliderMax));
+  const annotatedRows = lastRenderContext
+    ? sampleRows(lastConcordanceRows, effectiveAnnotateSampleSize)
+    : [];
+
+  const buildConcordanceResults = (rows: ConcordanceRow[], context: RenderResultContext): React.ReactNode[] => {
+    return rows.map((row, index) => {
+      const textHtml = row.fragHtml ? withGeoAnnotationTitles(row.fragHtml) : null;
+      const textRaw = row.fragRaw ?? row.frag ?? '';
+      const metadata = metadataArray.find(item => item.id === row.bookId);
+      const nbProximity = Math.max(context.normalizedBefore, context.normalizedAfter);
+      const baseSearchExpression = `"${context.trimmedQuery}"~${nbProximity}`;
+      const baseUrnLink = buildNationalLibraryLink(metadata?.urn, baseSearchExpression);
+
+      return (
+        <div
+          key={index}
+          className="concordance"
+          data-book-id={row.bookId}
+          onClick={(event) => {
+            if (!metadata) return;
+            const target = event.target as HTMLElement;
+            const annotationEl = target.closest('annotation[data-layer="geo"]') as HTMLElement | null;
+
+            if (annotationEl) {
+              const geoSearchTerm = annotationEl.textContent?.trim() || context.trimmedQuery;
+              const extraGeoTerm = context.extraGeoTermsText;
+              const escapedGeoTerm = geoSearchTerm.replace(/"/g, '\\"').trim();
+              const escapedExtraTerm = extraGeoTerm ? extraGeoTerm.replace(/"/g, '\\"').trim() : null;
+              const geoSearchExpression = escapedExtraTerm
+                ? `"${escapedGeoTerm} ${escapedExtraTerm}"~${context.normalizedNearWindow}`
+                : escapedGeoTerm;
+              const geoUrnLink = buildNationalLibraryLink(metadata.urn, geoSearchExpression);
+              handleConcordanceClick(metadata, geoUrnLink);
+              return;
+            }
+
+            handleConcordanceClick(metadata, baseUrnLink);
+          }}
+        >
+          {debugEnabled && (
+            <div className="text-muted" style={{ fontSize: "11px" }}>
+              dhlabid: {row.bookId}
+            </div>
+          )}
+          {textHtml
+            ? <p dangerouslySetInnerHTML={{ __html: textHtml }} />
+            : textRaw
+              ? <p>{textRaw}</p>
+              : <p className="text-muted fst-italic">Ingen fragmenttekst fra backend.</p>}
+        </div>
+      );
+    });
+  };
+
+  const buildAnnotatedDataframe = (rows: ConcordanceRow[]): React.ReactNode => (
+    <div className="annotated-dataframe mt-4">
+      <div className="d-flex justify-content-between align-items-center mb-2">
+        <h2 className="h6 mb-0">Slutt-tabell</h2>
+        <small className="text-muted">
+          Viser {rows.length} av {lastConcordanceRows.length} rader
+        </small>
+      </div>
+      <div className="table-responsive">
+        <table className="table table-sm table-striped align-middle">
+          <thead>
+            <tr>
+              <th scope="col">dhlabid</th>
+              <th scope="col">Tittel</th>
+              <th scope="col">Forfatter</th>
+              <th scope="col">År</th>
+              <th scope="col">Fragment</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, index) => {
+              const metadata = metadataArray.find((item) => item.id === row.bookId);
+              const fragmentText = row.fragRaw ?? row.frag ?? row.surfaceText ?? '';
+              return (
+                <tr key={`${row.bookId}-${row.pos ?? row.seqStart ?? index}`}>
+                  <td>{row.bookId}</td>
+                  <td>{metadata?.title ?? ''}</td>
+                  <td>{metadata?.author ?? ''}</td>
+                  <td>{metadata?.year ?? ''}</td>
+                  <td className="text-break">{fragmentText}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
   return (
     <div className="container my-4">
       <h1 className="text-center mb-4 d-flex justify-content-center align-items-center gap-2">
@@ -1157,8 +1267,8 @@ function App() {
               <input
                 type="text"
                 className="form-control"
-                placeholder='f.eks. norge, "norge i krig", #geo krig, #geo:"Rio de Janeiro"'
-                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo:"Rio de Janeiro" | #geo [krig, slag] [skip, sjø] | #geo:geonames:317552'
+                placeholder='f.eks. norge, "norge i krig", #geo krig, #geo:1032414'
+                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo:"Rio de Janeiro" | #geo:1032414 | #geo:nb:1032414'
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 onKeyPress={(e) => {
@@ -1175,9 +1285,9 @@ function App() {
                   className={`btn ${resultMode === 'render' ? 'btn-secondary' : 'btn-outline-secondary'}`}
                   type="button"
                   onClick={() => setResultMode('render')}
-                  title="Vis fragmenter og konkordanser"
+                  title="Vis annotering og konkordanser"
                 >
-                  Konk
+                  Annoter
                 </button>
                 <button
                   className={`btn ${resultMode === 'count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
@@ -1188,6 +1298,23 @@ function App() {
                   Telling
                 </button>
               </div>
+              {resultMode === 'render' && (
+                <div className="annotate-slider-panel border rounded px-2 py-1">
+                  <div className="small fw-semibold">
+                    Annoter: {effectiveAnnotateSampleSize >= annotateSliderMax ? 'alle' : `${effectiveAnnotateSampleSize} rader`}
+                  </div>
+                  <input
+                    type="range"
+                    className="form-range mb-0"
+                    min={10}
+                    max={annotateSliderMax}
+                    step={1}
+                    value={effectiveAnnotateSampleSize}
+                    onChange={(e) => setAnnotateSampleSize(Number(e.target.value))}
+                    title="Velg hvor mange rader som skal brukes i annotering"
+                  />
+                </div>
+              )}
 
               <div className="btn-group" role="group" aria-label="Korpus actions">
                 <button 
@@ -1281,7 +1408,17 @@ function App() {
             </div>
           </div>
         )}
-        {results}
+        {lastRenderContext && annotatedRows.length > 0 ? (
+          <>
+            <div className="small text-muted mb-2">
+              Annoter viser et sample av treffradene. Juster slideren over for å endre utvalget.
+            </div>
+            {buildConcordanceResults(annotatedRows, lastRenderContext)}
+            {buildAnnotatedDataframe(annotatedRows)}
+          </>
+        ) : (
+          results
+        )}
       </div>
 
       {/* Results Modal */}
@@ -1532,18 +1669,6 @@ function App() {
                   />
                 </div>
                 <div className="col-md-6">
-                  <label className="form-label">Korpussample ved hele korpuset</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={0}
-                    step={1}
-                    value={wholeCorpusSampleSize}
-                    onChange={(e) => setWholeCorpusSampleSize(Number(e.target.value))}
-                  />
-                  <small className="text-muted">0 = av. Brukes bare i konkordans når hele korpuset er valgt, og sender et stabilt utvalg dokument-id-er som filter.</small>
-                </div>
-                <div className="col-md-6">
                   <label className="form-label">Maks visning (cutoff)</label>
                   <input
                     type="number"
@@ -1622,21 +1747,22 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="alert alert-info py-2 mb-3">
-                Skriv i søkefeltet og velg mellom <code>Konk</code> og <code>Telling</code> i knapperaden.
+                Skriv i søkefeltet og velg mellom <code>Annoter</code> og <code>Telling</code> i knapperaden.
               </div>
               <div className="alert alert-light border py-2 mb-3">
                 <strong>Hva kan jeg søke etter?</strong><br />
-                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>, <code>#geo</code>, <code>#geo krig</code>, <code>#geo:"Rio de Janeiro"</code>, <code>#geo:geonames:317552</code>.
+                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>, <code>#geo</code>, <code>#geo krig</code>, <code>#geo:"Rio de Janeiro"</code>, <code>#geo:1032414</code>.
               </div>
               <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>. Flere ord uten anførselstegn blir behandlet som nærhetssøk.</p>
               <p><strong>Frasesøk:</strong> skriv uttrykket i anførselstegn, for eksempel <code>"i dag"</code> eller <code>"norge i krig"</code>. Da brukes <code>sequence</code> med eksakt rekkefølge.</p>
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en eksplisitt id som <code>#geo:geonames:317552</code> eller <code>#geo:internal:7081</code>.</p>
-              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser fragmenter og konkordanser. <code>Telling</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
+              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en NB-steds-id som <code>#geo:1032414</code>. Ved behov prøver appen også <code>#geo:nb:1032414</code>.</p>
+              <p><strong>Resultatmodus:</strong> <code>Annoter</code> viser konkordanser og en slutt-tabell for et valgt sample av rader. <code>Telling</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
               <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
-              <p><strong>Store søk:</strong> backend håndterer nå store korpus bedre. Konkordans er fortsatt et utvalg av treff, mens telling kan gå bredere.</p>
+              <p><strong>Annoter-sample:</strong> slideren i topplinjen velger hvor mange rader som tas med i annotering og i slutt-tabellen.</p>
+              <p><strong>Store søk:</strong> annotering viser et sample av treffradene, mens telling kan gå bredere.</p>
             </div>
             <div className="modal-footer">
               <button
