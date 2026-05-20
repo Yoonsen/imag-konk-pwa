@@ -46,6 +46,18 @@ interface CountResponse {
   docs?: number;
 }
 
+interface YearCountRow {
+  year: number;
+  total?: number;
+  docs?: number;
+  filterDocs?: number;
+  responseMs?: number;
+}
+
+interface YearCountResponse {
+  rows?: YearCountRow[];
+}
+
 interface PlaceResolverMatch {
   id: string;
   canonicalName?: string;
@@ -106,6 +118,130 @@ const MIN_YEAR = 1814;
 const MAX_YEAR = 1905;
 const PLACE_RESOLVER_URL = 'https://api.nb.no/dhlab/imag/api/place/resolve';
 
+const numberFormatter = new Intl.NumberFormat('nb-NO');
+
+function buildYearCountResults(yearRows: YearCountRow[]): React.ReactNode {
+  const rows = yearRows
+    .filter((row) => Number.isFinite(row.year))
+    .map((row) => ({
+      year: Math.trunc(row.year),
+      total: typeof row.total === 'number' ? row.total : 0,
+      docs: typeof row.docs === 'number' ? row.docs : 0,
+      filterDocs: typeof row.filterDocs === 'number' ? row.filterDocs : 0
+    }))
+    .sort((a, b) => a.year - b.year);
+
+  if (rows.length === 0) {
+    return <p key="no-year-results">No yearly counts found for this query.</p>;
+  }
+
+  const totalMatches = rows.reduce((sum, row) => sum + row.total, 0);
+  const peakRow = rows.reduce((peak, row) => (row.total > peak.total ? row : peak), rows[0]);
+  const width = 720;
+  const height = 240;
+  const padding = { top: 16, right: 16, bottom: 32, left: 48 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const maxTotal = Math.max(...rows.map((row) => row.total), 1);
+  const points = rows.map((row, index) => {
+    const x = rows.length === 1
+      ? padding.left + plotWidth / 2
+      : padding.left + (index / (rows.length - 1)) * plotWidth;
+    const y = padding.top + plotHeight - (row.total / maxTotal) * plotHeight;
+    return { ...row, x, y };
+  });
+  const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
+  const axisLabelIndexes = Array.from(new Set([
+    0,
+    Math.floor((rows.length - 1) / 2),
+    rows.length - 1
+  ])).sort((a, b) => a - b);
+
+  return (
+    <div className="year-count-results">
+      <div className="year-count-summary">
+        <div className="year-count-card">
+          <strong>Total treff</strong>
+          <span>{numberFormatter.format(totalMatches)}</span>
+        </div>
+        <div className="year-count-card">
+          <strong>År med flest treff</strong>
+          <span>{peakRow.year}: {numberFormatter.format(peakRow.total)}</span>
+        </div>
+        <div className="year-count-card">
+          <strong>År med treff</strong>
+          <span>{numberFormatter.format(rows.length)}</span>
+        </div>
+      </div>
+
+      <div className="year-count-chart">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Årlig telling">
+          <line
+            x1={padding.left}
+            y1={padding.top + plotHeight}
+            x2={padding.left + plotWidth}
+            y2={padding.top + plotHeight}
+            stroke="#adb5bd"
+            strokeWidth="1"
+          />
+          <line
+            x1={padding.left}
+            y1={padding.top}
+            x2={padding.left}
+            y2={padding.top + plotHeight}
+            stroke="#adb5bd"
+            strokeWidth="1"
+          />
+          <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" fontSize="12" fill="#6c757d">
+            {numberFormatter.format(maxTotal)}
+          </text>
+          <text x={padding.left - 8} y={padding.top + plotHeight + 4} textAnchor="end" fontSize="12" fill="#6c757d">
+            0
+          </text>
+          {polylinePoints ? (
+            <polyline
+              fill="none"
+              stroke="#0d6efd"
+              strokeWidth="2.5"
+              points={polylinePoints}
+            />
+          ) : null}
+          {points.map((point) => (
+            <circle
+              key={`year-point-${point.year}`}
+              cx={point.x}
+              cy={point.y}
+              r="3"
+              fill="#0d6efd"
+            >
+              <title>{`${point.year}: ${numberFormatter.format(point.total)} treff`}</title>
+            </circle>
+          ))}
+          {axisLabelIndexes.map((index) => {
+            const point = points[index];
+            return (
+              <text
+                key={`year-axis-${point.year}`}
+                x={point.x}
+                y={height - 8}
+                textAnchor="middle"
+                fontSize="12"
+                fill="#6c757d"
+              >
+                {point.year}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+
+      <div className="year-count-note">
+        Kurven viser <code>rows[].year</code> mot <code>rows[].total</code>. <code>docs</code> og <code>filterDocs</code> beholdes i debug-data.
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
   const [uniqueAuthors, setUniqueAuthors] = useState<string[]>([]);
@@ -121,7 +257,7 @@ function App() {
   const [docSamples, setDocSamples] = useState<number>(50);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
-  const [resultMode, setResultMode] = useState<'render' | 'count'>('render');
+  const [resultMode, setResultMode] = useState<'render' | 'count' | 'year-count'>('render');
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
@@ -645,6 +781,14 @@ function App() {
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
       const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
       const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
+      const usesNearQueryAggregate = resultMode === 'count' || resultMode === 'year-count';
+      const nearQueryMode = resultMode === 'year-count' ? 'year-count' : 'count';
+      const yearCountRange = resultMode === 'year-count'
+        ? {
+            startYear: yearRange[0],
+            endYear: yearRange[1]
+          }
+        : {};
 
       // Keep the user-selected per-book sample count; only trim broader cost drivers below.
       const effectivePerBook = normalizedPerBook;
@@ -656,7 +800,7 @@ function App() {
         ? "near_query"
         : geoQuery.terms
         ? "or_query"
-        : resultMode === 'count'
+        : usesNearQueryAggregate
         ? "near_query"
         : usesOrQuery
         ? "or_query"
@@ -667,7 +811,7 @@ function App() {
             termGroups: geoQuery.termGroups,
             useFilter,
             filterIds: useFilter ? effectiveFilterIds : [],
-            mode: resultMode,
+            mode: resultMode === 'year-count' ? 'year-count' : resultMode,
             perBook: effectivePerBook,
             totalLimit: effectiveTotalLimit,
             docSamples: effectiveDocSamples,
@@ -676,7 +820,8 @@ function App() {
             excludeSelf: false,
             window: normalizedNearWindow,
             before: normalizedBefore,
-            after: normalizedAfter
+            after: normalizedAfter,
+            ...yearCountRange
           }
         : geoQuery.terms
         ? {
@@ -694,7 +839,7 @@ function App() {
             termGroups: effectiveTermGroups,
             useFilter,
             filterIds: useFilter ? effectiveFilterIds : [],
-            mode: "count",
+            mode: nearQueryMode,
             perBook: effectivePerBook,
             totalLimit: effectiveTotalLimit,
             docSamples: effectiveDocSamples,
@@ -703,7 +848,8 @@ function App() {
             excludeSelf: false,
             window: normalizedNearWindow,
             before: normalizedBefore,
-            after: normalizedAfter
+            after: normalizedAfter,
+            ...yearCountRange
           }
         : endpointPath === "near_fragments"
         ? {
@@ -805,6 +951,53 @@ function App() {
         (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
       );
 
+      if (endpointPath === "near_query" && resultMode === 'year-count') {
+        const yearCountResp: YearCountResponse = await concResp.json();
+        const categoryText = selectedCategories.includes('All Categories')
+          ? ''
+          : ` in categories: ${selectedCategories.join(', ')}`;
+        const authorText = selectedAuthors.length > 0
+          ? ` by authors: ${selectedAuthors.join(', ')}`
+          : '';
+        const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+          ? ''
+          : ` from ${yearRange[0]} to ${yearRange[1]}`;
+        const rows = Array.isArray(yearCountResp.rows)
+          ? [...yearCountResp.rows].sort((a, b) => a.year - b.year)
+          : [];
+        const total = rows.reduce((sum, row) => sum + (typeof row.total === 'number' ? row.total : 0), 0);
+        const peakRow = rows.reduce<YearCountRow | null>((peak, row) => {
+          const currentTotal = typeof row.total === 'number' ? row.total : 0;
+          const peakTotal = peak && typeof peak.total === 'number' ? peak.total : -1;
+          return currentTotal > peakTotal ? row : peak;
+        }, null);
+
+        setStatus(
+          `Found ${numberFormatter.format(total)} matches for "${trimmedQuery}"${categoryText}${authorText}${yearText} ` +
+          `across ${rows.length} years${peakRow ? ` (peak: ${peakRow.year} = ${numberFormatter.format(peakRow.total ?? 0)})` : ''} ` +
+          `(${responseElapsedMs} ms)`
+        );
+        setLastConcordanceRows([]);
+        setLastRenderContext(null);
+        setResults(buildYearCountResults(rows));
+        setDebugInfo({
+          endpoint: endpointPath,
+          queryMode: endpointPath,
+          usedEngine: null,
+          isGeoQuery: !!geoQuery.termGroups,
+          resultMode,
+          years: rows.length,
+          total,
+          peakYear: peakRow?.year ?? null,
+          peakTotal: peakRow?.total ?? 0,
+          responseMs: responseElapsedMs,
+          filteredDocs: filteredMetadata.length,
+          useFilter,
+          filterIdsCount: useFilter ? effectiveFilterIds.length : 0
+        });
+        return;
+      }
+
       if (endpointPath === "near_query" && resultMode === 'count') {
         const countResp: CountResponse = await concResp.json();
         const categoryText = selectedCategories.includes('All Categories')
@@ -821,6 +1014,7 @@ function App() {
 
         setStatus(`Found ${total} matches for "${trimmedQuery}"${categoryText}${authorText}${yearText} (docs: ${docs}, ${responseElapsedMs} ms)`);
         setLastConcordanceRows([]);
+        setLastRenderContext(null);
         setResults(
           <div className="concordance">
             <p><strong>Treff:</strong> {total}</p>
@@ -1230,6 +1424,14 @@ function App() {
                   title="Vis telling"
                 >
                   Tell
+                </button>
+                <button
+                  className={`btn ${resultMode === 'year-count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
+                  type="button"
+                  onClick={() => setResultMode('year-count')}
+                  title="Vis telling per år"
+                >
+                  Year count
                 </button>
               </div>
 
@@ -1663,7 +1865,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="alert alert-info py-2 mb-3">
-                Skriv i søkefeltet og velg mellom <code>Konk</code> og <code>Tell</code> i knapperaden.
+                Skriv i søkefeltet og velg mellom <code>Konk</code>, <code>Tell</code> og <code>Year count</code> i knapperaden.
               </div>
               <div className="alert alert-light border py-2 mb-3">
                 <strong>Hva kan jeg søke etter?</strong><br />
@@ -1674,11 +1876,11 @@ function App() {
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
               <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en NB-steds-id som <code>#geo:1032414</code>. Ved behov prøver appen også <code>#geo:nb:1032414</code>.</p>
-              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> sender vanlige søk til <code>near_query</code> med <code>mode=count</code> og viser raske totaler og dokumentdekning.</p>
+              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> sender vanlige søk til <code>near_query</code> med <code>mode=count</code>. <code>Year count</code> bruker samme løype med <code>mode=year-count</code> og tegner en årsserie fra <code>rows[].year</code> mot <code>rows[].total</code>.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
               <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
               <p><strong>Treffmengde:</strong> bruk <code>Samples per book</code>, <code>doc_samples</code> og <code>Maks visning</code> i verktøymenyen for å styre hvor mange treff Konk viser.</p>
-              <p><strong>Store søk:</strong> Konk følger treffutvalget fra verktøymenyen, mens Tell kan gå bredere.</p>
+              <p><strong>Store søk:</strong> Konk følger treffutvalget fra verktøymenyen, mens Tell og Year count kan gå bredere.</p>
             </div>
             <div className="modal-footer">
               <button

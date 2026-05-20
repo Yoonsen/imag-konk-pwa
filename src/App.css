@@ -48,6 +48,61 @@
   border-radius: 4px;
 }
 
+.year-count-results {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.year-count-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.year-count-card {
+  padding: 12px;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  background: #f8f9fa;
+}
+
+.year-count-card strong,
+.year-count-card span {
+  display: block;
+}
+
+.year-count-card strong {
+  margin-bottom: 4px;
+  color: #495057;
+  font-size: 0.9rem;
+}
+
+.year-count-card span {
+  font-size: 1.05rem;
+}
+
+.year-count-chart {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  background: #fff;
+  padding: 8px;
+}
+
+.year-count-chart svg {
+  display: block;
+  width: 100%;
+  min-width: 640px;
+  height: auto;
+}
+
+.year-count-note {
+  color: #6c757d;
+  font-size: 0.9rem;
+}
+
 .category-filter-list {
   max-height: 240px;
   overflow-y: auto;
