@@ -1431,7 +1431,7 @@ function App() {
                   onClick={() => setResultMode('year-count')}
                   title="Vis telling per år"
                 >
-                  Year count
+                  Trend
                 </button>
               </div>
 
@@ -1865,7 +1865,7 @@ function App() {
             </div>
             <div className="modal-body">
               <div className="alert alert-info py-2 mb-3">
-                Skriv i søkefeltet og velg mellom <code>Konk</code>, <code>Tell</code> og <code>Year count</code> i knapperaden.
+                Skriv i søkefeltet og velg mellom <code>Konk</code>, <code>Tell</code> og <code>Trend</code> i knapperaden.
               </div>
               <div className="alert alert-light border py-2 mb-3">
                 <strong>Hva kan jeg søke etter?</strong><br />
@@ -1876,11 +1876,11 @@ function App() {
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
               <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en NB-steds-id som <code>#geo:1032414</code>. Ved behov prøver appen også <code>#geo:nb:1032414</code>.</p>
-              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> sender vanlige søk til <code>near_query</code> med <code>mode=count</code>. <code>Year count</code> bruker samme løype med <code>mode=year-count</code> og tegner en årsserie fra <code>rows[].year</code> mot <code>rows[].total</code>.</p>
+              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> sender vanlige søk til <code>near_query</code> med <code>mode=count</code>. <code>Trend</code> bruker samme løype med <code>mode=year-count</code> og tegner en årsserie fra <code>rows[].year</code> mot <code>rows[].total</code>.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
               <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
               <p><strong>Treffmengde:</strong> bruk <code>Samples per book</code>, <code>doc_samples</code> og <code>Maks visning</code> i verktøymenyen for å styre hvor mange treff Konk viser.</p>
-              <p><strong>Store søk:</strong> Konk følger treffutvalget fra verktøymenyen, mens Tell og Year count kan gå bredere.</p>
+              <p><strong>Store søk:</strong> Konk følger treffutvalget fra verktøymenyen, mens Tell og Trend kan gå bredere.</p>
             </div>
             <div className="modal-footer">
               <button
