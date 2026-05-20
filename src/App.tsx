@@ -642,7 +642,6 @@ function App() {
       const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
       const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
       const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
-      const usesNearQueryCount = !geoQuery.termGroups && !!effectiveTermGroups && effectiveTermGroups.length > 1 && resultMode === 'count';
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
       const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
       const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
@@ -657,7 +656,7 @@ function App() {
         ? "near_query"
         : geoQuery.terms
         ? "or_query"
-        : usesNearQueryCount
+        : resultMode === 'count'
         ? "near_query"
         : usesOrQuery
         ? "or_query"
@@ -806,7 +805,7 @@ function App() {
         (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
       );
 
-      if ((geoQuery.termGroups && resultMode === 'count') || usesNearQueryCount) {
+      if (endpointPath === "near_query" && resultMode === 'count') {
         const countResp: CountResponse = await concResp.json();
         const categoryText = selectedCategories.includes('All Categories')
           ? ''
@@ -1228,7 +1227,7 @@ function App() {
                   className={`btn ${resultMode === 'count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
                   type="button"
                   onClick={() => setResultMode('count')}
-                  title="Vis telling for flergruppesøk"
+                  title="Vis telling"
                 >
                   Tell
                 </button>
@@ -1675,7 +1674,7 @@ function App() {
               <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
               <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
               <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en NB-steds-id som <code>#geo:1032414</code>. Ved behov prøver appen også <code>#geo:nb:1032414</code>.</p>
-              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> viser raske totaler og dokumentdekning for flergruppesøk og geo-near.</p>
+              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> sender vanlige søk til <code>near_query</code> med <code>mode=count</code> og viser raske totaler og dokumentdekning.</p>
               <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
               <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
               <p><strong>Treffmengde:</strong> bruk <code>Samples per book</code>, <code>doc_samples</code> og <code>Maks visning</code> i verktøymenyen for å styre hvor mange treff Konk viser.</p>
