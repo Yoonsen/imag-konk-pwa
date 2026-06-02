@@ -869,7 +869,8 @@ function App() {
       const yearCountRange = activeResultMode === 'year-count'
         ? {
             startYear: activeYearRange[0],
-            endYear: activeYearRange[1]
+            endYear: activeYearRange[1],
+            countMode: 'anchor' as const
           }
         : {};
 

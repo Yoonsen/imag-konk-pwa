@@ -35,6 +35,8 @@ The frontend does not own the yearly counts.
 - Plot trend points against actual year values, not array position.
 - Dominant years can visually flatten the rest of the series; this is a normal
   autoscaling effect, not necessarily a backend bug.
+- Prefer `countMode="anchor"` in trend mode when the goal is concordance-aligned
+  yearly counts rather than the fastest approximate pairwise count.
 - Trend drilldown should stay transient: do not rewrite the main search state
   just to inspect a year bucket.
 - Trend points can expose concordance drilldown actions such as exact year or

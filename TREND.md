@@ -35,6 +35,8 @@ The trend UI was updated in `src/App.tsx` to:
 - report `År med treff` as years with `total > 0`, not just row count
 - treat the year range as a trend viewport in `year-count` mode instead of an
   extra frontend corpus filter
+- request `countMode="anchor"` for trend counts so the plotted series stays
+  closer to what concordance drilldown can actually render
 - allow clicking a trend point to open concordances for that exact year within
   the same active corpus context
 
@@ -71,3 +73,17 @@ For `demokratiet`, the overlapping years matched exactly between:
 - `startYear=1860` series
 
 That comparison ruled out a backend counting bug for this case.
+
+## Near Count Gotcha
+
+For some pairwise near queries, backend `countMode="auto"` can pick a very fast
+partner-popcount path that does not line up well with the fragment/render path.
+
+Observed example:
+
+- query: `frihed gudsdyrkelse`
+- `auto` / `partner_popcount` produced large yearly totals
+- `anchor` produced sparse yearly hits that matched renderable concordances much
+  better
+
+Because of that, trend mode now explicitly asks for `countMode="anchor"`.
