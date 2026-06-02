@@ -128,7 +128,9 @@ const numberFormatter = new Intl.NumberFormat('nb-NO');
 
 function buildYearCountResults(
   yearRows: YearCountRow[],
-  onYearSelect?: (year: number) => void
+  onYearSelect?: (year: number, span: 'exact' | 'window5') => void,
+  activeYear?: YearCountRow | null,
+  onYearHover?: (row: YearCountRow) => void
 ): React.ReactNode {
   const rows = yearRows
     .filter((row) => Number.isFinite(row.year))
@@ -225,12 +227,14 @@ function buildYearCountResults(
               cy={point.y}
               r="4"
               fill="#0d6efd"
-              style={onYearSelect ? { cursor: 'pointer' } : undefined}
-              onClick={onYearSelect ? () => onYearSelect(point.year) : undefined}
+              style={onYearHover ? { cursor: 'pointer' } : undefined}
+              onMouseEnter={onYearHover ? () => onYearHover(point) : undefined}
+              onFocus={onYearHover ? () => onYearHover(point) : undefined}
+              tabIndex={onYearHover ? 0 : -1}
             >
               <title>
                 {onYearSelect
-                  ? `${point.year}: ${numberFormatter.format(point.total)} treff. Klikk for konkordanser i dette året.`
+                  ? `${point.year}: ${numberFormatter.format(point.total)} treff. Hold pekeren over for å åpne konkordanser i dette året.`
                   : `${point.year}: ${numberFormatter.format(point.total)} treff`}
               </title>
             </circle>
@@ -253,9 +257,35 @@ function buildYearCountResults(
         </svg>
       </div>
 
+      {activeYear && onYearSelect ? (
+        <div className="year-count-action">
+          <div>
+            <strong>{activeYear.year}</strong>: {numberFormatter.format(activeYear.total ?? 0)} treff
+            {typeof activeYear.docs === 'number' ? ` i ${numberFormatter.format(activeYear.docs)} dokumenter` : ''}
+          </div>
+          <div className="year-count-action-buttons">
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-primary"
+              onClick={() => onYearSelect(activeYear.year, 'exact')}
+            >
+              Dette året
+            </button>
+            <button
+              type="button"
+              className="btn btn-sm btn-outline-secondary"
+              onClick={() => onYearSelect(activeYear.year, 'window5')}
+              title={`Vis konkordanser for ${activeYear.year - 5} til ${activeYear.year + 5}`}
+            >
+              +/- 5 år
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="year-count-note">
         Kurven viser <code>rows[].year</code> mot <code>rows[].total</code>. <code>docs</code> og <code>filterDocs</code> beholdes i debug-data.
-        {onYearSelect ? ' Klikk et punkt for å åpne konkordanser for akkurat det året.' : ''}
+        {onYearSelect ? ' Hold pekeren over et punkt for å velge år og åpne konkordanser transient.' : ''}
       </div>
     </div>
   );
@@ -289,6 +319,16 @@ function App() {
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
   const [lastRenderContext, setLastRenderContext] = useState<RenderResultContext | null>(null);
+  const [trendRows, setTrendRows] = useState<YearCountRow[] | null>(null);
+  const [trendQuery, setTrendQuery] = useState<string>('');
+  const [trendHoverRow, setTrendHoverRow] = useState<YearCountRow | null>(null);
+  const [showTrendConcordanceModal, setShowTrendConcordanceModal] = useState(false);
+  const [trendConcordanceYear, setTrendConcordanceYear] = useState<number | null>(null);
+  const [trendConcordanceRangeLabel, setTrendConcordanceRangeLabel] = useState<string>('');
+  const [trendConcordanceRows, setTrendConcordanceRows] = useState<ConcordanceRow[]>([]);
+  const [trendConcordanceContext, setTrendConcordanceContext] = useState<RenderResultContext | null>(null);
+  const [trendConcordanceStatus, setTrendConcordanceStatus] = useState<string>('');
+  const [trendConcordanceError, setTrendConcordanceError] = useState<string | null>(null);
   const [persistentFilterIds, setPersistentFilterIds] = useState<number[] | null>(null);
   const [debugEnabled, setDebugEnabled] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -298,6 +338,40 @@ function App() {
   const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const baseMetadataByIdRef = useRef<Map<number, Metadata>>(new Map());
+
+  const buildFilterSelection = (
+    activeYearRange: [number, number],
+    ignoreYearRange: boolean
+  ) => {
+    const filteredMetadata = metadataArray.filter((item) => {
+      const categoryMatch = selectedCategories.includes('All Categories') ||
+        (item.category && selectedCategories.includes(item.category));
+      const authorMatch = selectedAuthors.length === 0 ||
+        (item.author && selectedAuthors.includes(item.author));
+      const year = Number(item.year ?? 0);
+      const yearMatch = ignoreYearRange
+        ? true
+        : year >= activeYearRange[0] && year <= activeYearRange[1];
+      return categoryMatch && authorMatch && yearMatch;
+    });
+
+    const filterIds = filteredMetadata.map((item) => item.id);
+    const constraintYearRange = ignoreYearRange ? [MIN_YEAR, MAX_YEAR] : activeYearRange;
+    const hasFilterModalConstraints =
+      !selectedCategories.includes('All Categories') ||
+      selectedAuthors.length > 0 ||
+      constraintYearRange[0] !== MIN_YEAR ||
+      constraintYearRange[1] !== MAX_YEAR;
+    const baseFilterIds = persistentFilterIds
+      ? (hasFilterModalConstraints ? filterIds : persistentFilterIds)
+      : filterIds;
+    const effectiveFilterIds = baseFilterIds;
+    const useFilter = persistentFilterIds
+      ? effectiveFilterIds.length > 0
+      : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length);
+
+    return { filteredMetadata, effectiveFilterIds, useFilter };
+  };
 
   const parseTermGroups = (rawInput: string): string[][] | null => {
     const trimmed = rawInput.trim();
@@ -569,6 +643,9 @@ function App() {
           setYearRange([MIN_YEAR, MAX_YEAR]);
           setResults(null);
           setLastConcordanceRows([]);
+          setTrendRows(null);
+          setTrendQuery('');
+          setTrendHoverRow(null);
           setDebugRequest(null);
           setDebugInfo(null);
           // Extract unique authors
@@ -631,6 +708,9 @@ function App() {
     setResults(null);
     setLastConcordanceRows([]);
     setLastRenderContext(null);
+    setTrendRows(null);
+    setTrendQuery('');
+    setTrendHoverRow(null);
 
     try {
       const geoResolverInput = parseResolvableGeoInput(trimmedQuery);
@@ -759,40 +839,16 @@ function App() {
 
       // For trend mode, use the year range as the plotted viewport.
       // Keep the corpus filter stable so zooming does not change the underlying slice.
-      const filteredMetadata = metadataArray.filter(item => {
-        const categoryMatch = selectedCategories.includes('All Categories') || 
-          (item.category && selectedCategories.includes(item.category));
-        
-        const authorMatch = selectedAuthors.length === 0 || 
-          (item.author && selectedAuthors.includes(item.author));
-        
-        const year = Number(item.year ?? 0);
-        const yearMatch = activeResultMode === 'year-count'
-          ? true
-          : year >= activeYearRange[0] && year <= activeYearRange[1];
-        
-        return categoryMatch && authorMatch && yearMatch;
-      });
+      const { filteredMetadata, effectiveFilterIds, useFilter } = buildFilterSelection(
+        activeYearRange,
+        activeResultMode === 'year-count'
+      );
 
       if (filteredMetadata.length === 0) {
         setStatus("No documents match the selected filters.");
         setResults(<p key="no-filter-results">No documents match the selected filters.</p>);
         return;
       }
-
-      const filterIds = filteredMetadata.map(item => item.id);
-      const hasFilterModalConstraints =
-        !selectedCategories.includes('All Categories') ||
-        selectedAuthors.length > 0 ||
-        activeYearRange[0] !== MIN_YEAR ||
-        activeYearRange[1] !== MAX_YEAR;
-      const baseFilterIds = persistentFilterIds
-        ? (hasFilterModalConstraints ? filterIds : persistentFilterIds)
-        : filterIds;
-      const effectiveFilterIds = baseFilterIds;
-      const useFilter = persistentFilterIds
-        ? effectiveFilterIds.length > 0
-        : (effectiveFilterIds.length > 0 && effectiveFilterIds.length < metadataArray.length);
       const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
       const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
       const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
@@ -1006,15 +1062,11 @@ function App() {
         );
         setLastConcordanceRows([]);
         setLastRenderContext(null);
-        setResults(buildYearCountResults(rows, (year) => {
-          setResultMode('render');
-          setYearRange([year, year]);
-          void performSearch({
-            query: trimmedQuery,
-            resultMode: 'render',
-            yearRange: [year, year]
-          });
-        }));
+        const initialTrendHoverRow = rows.find((row) => (row.total ?? 0) > 0) ?? rows[0] ?? null;
+        setTrendRows(rows);
+        setTrendQuery(trimmedQuery);
+        setTrendHoverRow(initialTrendHoverRow);
+        setResults(null);
         setDebugInfo({
           endpoint: endpointPath,
           queryMode: endpointPath,
@@ -1179,6 +1231,230 @@ function App() {
     }
   };
 
+  const openTrendConcordancesForYear = async (
+    year: number,
+    queryText: string,
+    span: 'exact' | 'window5' = 'exact'
+  ) => {
+    const activeYearRange: [number, number] = span === 'window5'
+      ? [Math.max(MIN_YEAR, year - 5), Math.min(MAX_YEAR, year + 5)]
+      : [year, year];
+    const rangeLabel = activeYearRange[0] === activeYearRange[1]
+      ? `${activeYearRange[0]}`
+      : `${activeYearRange[0]}-${activeYearRange[1]}`;
+    setShowTrendConcordanceModal(true);
+    setTrendConcordanceYear(year);
+    setTrendConcordanceRangeLabel(rangeLabel);
+    setTrendConcordanceRows([]);
+    setTrendConcordanceContext(null);
+    setTrendConcordanceError(null);
+    setTrendConcordanceStatus(`Laster konkordanser for ${rangeLabel}...`);
+
+    try {
+      const { filteredMetadata, effectiveFilterIds, useFilter } = buildFilterSelection(activeYearRange, false);
+      if (filteredMetadata.length === 0) {
+        throw new Error(`Ingen dokumenter matcher filteret for ${rangeLabel}.`);
+      }
+
+      const geoQuery = parseGeoQuery(queryText);
+      if (geoQuery.invalid) {
+        throw new Error('Ugyldig geo-søk for trenddrilldown.');
+      }
+
+      const hasQuotedPhrase = /^"[^"]+"$/.test(queryText);
+      const normalizedQuery = hasQuotedPhrase ? queryText.slice(1, -1).trim() : queryText;
+      const words = normalizedQuery.split(/\s+/).filter(Boolean);
+      let parsedTermGroups: string[][] | null = null;
+      const termGroupsSource = termGroupsInput.trim() || (queryText.includes('[') ? queryText : '');
+      const autoTermGroups =
+        !termGroupsInput.trim() && !queryText.includes('[') && words.length >= 1
+          ? toSingleTermGroups(normalizedQuery)
+          : null;
+
+      if (termGroupsSource) {
+        parsedTermGroups = parseTermGroups(termGroupsSource);
+      }
+
+      const effectiveTermGroups = (geoQuery.terms || geoQuery.termGroups) ? null : (parsedTermGroups ?? autoTermGroups);
+      if (!effectiveTermGroups && !geoQuery.terms && !geoQuery.termGroups) {
+        throw new Error('Ingen gyldig søkestruktur for trenddrilldown.');
+      }
+
+      const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
+      const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
+      const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
+      const normalizedOrQueryBefore = Math.max(1, normalizedBefore);
+      const normalizedOrQueryAfter = Math.max(1, normalizedAfter);
+      const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
+      const normalizedDocSamples = Math.max(0, Math.floor(docSamples) || 0);
+      const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
+      const normalizedOrQueryTotalLimit = Math.min(normalizedTotalLimit, 5000);
+      const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
+      const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
+      const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
+      const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && queryText.includes('[');
+      const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
+      const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
+      const effectiveTotalLimit = usesFastNearProfile ? Math.min(normalizedTotalLimit, 100) : normalizedTotalLimit;
+      const effectiveMaxVariants = usesFastNearProfile ? Math.min(normalizedMaxVariants, 6) : normalizedMaxVariants;
+      const endpointPath = geoQuery.termGroups
+        ? "near_query"
+        : geoQuery.terms
+        ? "or_query"
+        : usesOrQuery
+        ? "or_query"
+        : "near_fragments";
+
+      const requestBody = geoQuery.termGroups
+        ? {
+            termGroups: geoQuery.termGroups,
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : [],
+            mode: 'render',
+            perBook: normalizedPerBook,
+            totalLimit: effectiveTotalLimit,
+            docSamples: normalizedDocSamples,
+            schema: "unigrams",
+            symmetric: isSymmetric,
+            excludeSelf: false,
+            window: normalizedNearWindow,
+            before: normalizedBefore,
+            after: normalizedAfter
+          }
+        : geoQuery.terms
+        ? {
+            terms: geoQuery.terms,
+            before: normalizedOrQueryBefore,
+            after: normalizedOrQueryAfter,
+            docSamples: normalizedDocSamples,
+            totalLimit: normalizedOrQueryTotalLimit,
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : [],
+            renderHits: true
+          }
+        : endpointPath === "near_fragments"
+        ? {
+            termGroups: effectiveTermGroups,
+            matchMode: effectiveMatchMode,
+            window: normalizedNearWindow,
+            before: normalizedBefore,
+            after: normalizedAfter,
+            perBook: normalizedPerBook,
+            docSamples: normalizedDocSamples,
+            totalLimit: effectiveTotalLimit,
+            schema: "unigrams",
+            symmetric: isSymmetric,
+            excludeSelf: false,
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : [],
+            maxVariants: effectiveMaxVariants,
+            engine: "python"
+          }
+        : {
+            termGroups: effectiveTermGroups,
+            before: normalizedOrQueryBefore,
+            after: normalizedOrQueryAfter,
+            perBook: normalizedPerBook,
+            docSamples: normalizedDocSamples,
+            totalLimit: normalizedOrQueryTotalLimit,
+            schema: "unigrams",
+            useFilter,
+            filterIds: useFilter ? effectiveFilterIds : [],
+            maxVariants: effectiveMaxVariants
+          };
+
+      const runSearchRequest = (body: Record<string, unknown>) => fetch(`https://api.nb.no/dhlab/imag/${endpointPath}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      const fallbackGeoToken = geoQuery.terms && geoQuery.terms.length === 1
+        ? getNbGeoFallbackToken(geoQuery.terms[0])
+        : null;
+      const buildFallbackRequestBody = (token: string) => ({
+        ...requestBody,
+        terms: [token]
+      } as typeof requestBody);
+
+      let activeRequestBody: typeof requestBody = requestBody;
+      let activeGeoToken = geoQuery.terms?.[0] ?? null;
+      let geoFallbackApplied = false;
+
+      let concResp = await runSearchRequest(activeRequestBody);
+      if (!concResp.ok && concResp.status === 404 && fallbackGeoToken && activeGeoToken !== fallbackGeoToken) {
+        activeRequestBody = buildFallbackRequestBody(fallbackGeoToken);
+        activeGeoToken = fallbackGeoToken;
+        geoFallbackApplied = true;
+        concResp = await runSearchRequest(activeRequestBody);
+      }
+
+      if (!concResp.ok) {
+        const errorText = await concResp.text();
+        if (concResp.status === 404) {
+          throw new Error(errorText || `Ingen konkordanser funnet for ${rangeLabel}.`);
+        }
+        throw new Error(`HTTP error ${concResp.status}: ${errorText}`);
+      }
+
+      let conc: ConcordanceResponse = await concResp.json();
+      if (geoQuery.terms && !geoFallbackApplied && fallbackGeoToken && activeGeoToken !== fallbackGeoToken) {
+        const currentRows = Array.isArray(conc.rows) ? conc.rows : [];
+        const currentRenderedRows = Array.isArray(conc.rendered) ? conc.rendered : [];
+        if (currentRows.length === 0 && currentRenderedRows.length === 0) {
+          activeRequestBody = buildFallbackRequestBody(fallbackGeoToken);
+          activeGeoToken = fallbackGeoToken;
+          geoFallbackApplied = true;
+          const fallbackResp = await runSearchRequest(activeRequestBody);
+          if (fallbackResp.ok) {
+            conc = await fallbackResp.json();
+          }
+        }
+      }
+
+      const rows = Array.isArray(conc.rows) ? conc.rows : [];
+      const renderedRows = Array.isArray(conc.rendered) ? conc.rendered : [];
+      const mergedRows = geoQuery.terms && renderedRows.length > 0
+        ? rows.map((row, index) => {
+            const renderedMatch = renderedRows.find((renderedRow) =>
+              renderedRow.bookId === row.bookId &&
+              renderedRow.pos === row.pos
+            ) || renderedRows[index];
+            const mergedFrag = renderedMatch?.frag;
+            const mergedFragHtml = mergeGeoRenderedFragment(row, mergedFrag);
+            return {
+              ...row,
+              frag: mergedFrag ?? row.frag,
+              fragRaw: mergedFrag ?? row.fragRaw,
+              fragHtml: mergedFragHtml ?? row.fragHtml
+            };
+          })
+        : rows;
+
+      if (mergedRows.length === 0) {
+        throw new Error(`Ingen konkordanser funnet for ${rangeLabel}.`);
+      }
+
+      setTrendConcordanceRows(mergedRows);
+      setTrendConcordanceContext({
+        trimmedQuery: queryText,
+        normalizedBefore,
+        normalizedAfter,
+        normalizedNearWindow,
+        extraGeoTermsText: geoQuery.extraTermsText
+      });
+      setTrendConcordanceStatus(
+        `Fant ${mergedRows.length} konkordanser for "${queryText}" i ${rangeLabel} ` +
+        `(utvalg: ${new Set(mergedRows.map((row) => row.bookId)).size} dokumenter).`
+      );
+    } catch (error) {
+      setTrendConcordanceError(error instanceof Error ? error.message : 'Ukjent feil');
+      setTrendConcordanceStatus('');
+      setTrendConcordanceRows([]);
+      setTrendConcordanceContext(null);
+    }
+  };
+
   const handleCorpusUploadClick = () => {
     fileInputRef.current?.click();
   };
@@ -1254,6 +1530,9 @@ function App() {
       setYearRange([MIN_YEAR, MAX_YEAR]);
       setResults(null);
       setLastConcordanceRows([]);
+      setTrendRows(null);
+      setTrendQuery('');
+      setTrendHoverRow(null);
       setDebugRequest(null);
       setDebugInfo(null);
       setStatus(`Loaded metadata for ${parsedMetadata.length} documents from "${file.name}".`);
@@ -1569,6 +1848,13 @@ function App() {
             </div>
             {buildConcordanceResults(lastConcordanceRows, lastRenderContext)}
           </>
+        ) : trendRows && trendRows.length > 0 ? (
+          buildYearCountResults(
+            trendRows,
+            (year, span) => { void openTrendConcordancesForYear(year, trendQuery, span); },
+            trendHoverRow,
+            (row) => setTrendHoverRow(row)
+          )
         ) : (
           results
         )}
@@ -1609,6 +1895,51 @@ function App() {
                 type="button" 
                 className="btn btn-secondary" 
                 onClick={() => setShowModal(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Trend Concordance Modal */}
+      <div className={`modal fade ${showTrendConcordanceModal ? 'show' : ''}`}
+           style={{ display: showTrendConcordanceModal ? 'block' : 'none' }}
+           tabIndex={-1}
+           role="dialog">
+        <div className="modal-dialog modal-xl" role="document">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">
+                {trendConcordanceYear !== null
+                  ? `Konkordanser for ${trendConcordanceRangeLabel || trendConcordanceYear}`
+                  : 'Trend-konkordanser'}
+              </h5>
+              <button
+                type="button"
+                className="btn-close"
+                onClick={() => setShowTrendConcordanceModal(false)}
+                aria-label="Close"
+              ></button>
+            </div>
+            <div className="modal-body">
+              {trendConcordanceStatus ? (
+                <div className="small text-muted mb-3">{trendConcordanceStatus}</div>
+              ) : null}
+              {trendConcordanceError ? (
+                <p className="error mb-0">Trend-konkordans feilet: {trendConcordanceError}</p>
+              ) : trendConcordanceContext && trendConcordanceRows.length > 0 ? (
+                buildConcordanceResults(trendConcordanceRows, trendConcordanceContext)
+              ) : (
+                <p className="mb-0">Laster...</p>
+              )}
+            </div>
+            <div className="modal-footer">
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setShowTrendConcordanceModal(false)}
               >
                 Close
               </button>
@@ -1931,6 +2262,7 @@ function App() {
       </div>
 
       {showModal && <div className="modal-backdrop fade show"></div>}
+      {showTrendConcordanceModal && <div className="modal-backdrop fade show"></div>}
       {showFilterModal && <div className="modal-backdrop fade show"></div>}
       {showSearchParamsModal && <div className="modal-backdrop fade show"></div>}
       {showHelpModal && <div className="modal-backdrop fade show"></div>}

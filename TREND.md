@@ -38,16 +38,27 @@ The trend UI was updated in `src/App.tsx` to:
 - allow clicking a trend point to open concordances for that exact year within
   the same active corpus context
 
-## Current Click Behavior
+## Current Drilldown Behavior
 
-When the user is in `Trend` mode and clicks a year point:
+Trend drilldown is now transient rather than stateful.
 
-- the app switches to `Konk`
-- the selected year range is set to `[year, year]`
-- the same query is re-run as a concordance search for that year
+When the user is in `Trend` mode and hovers a year point:
 
-This is implemented entirely in the frontend by reusing the existing search
-function with per-request overrides.
+- the frontend marks that year as the active point
+- the UI shows two drilldown choices:
+  - `Dette året`
+  - `+/- 5 år`
+
+When the user picks one of those actions:
+
+- the app sends a temporary concordance request to the backend
+- the request uses the same active corpus context as the trend view
+- only the request-level year filter changes
+- concordances open in a modal using the normal concordance rendering
+- the main search state remains unchanged (`query`, `resultMode`, `yearRange`)
+
+This is implemented entirely in the frontend by reusing the existing concordance
+request logic with transient overrides.
 
 ## Backend Verification Reminder
 

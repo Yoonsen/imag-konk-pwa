@@ -17,7 +17,7 @@ When working on trends or concordance UX in this app, read:
 1. `README.md`
    - basic app purpose and usage
 2. `TREND.md`
-   - trendline behavior, known "squishing" effect, and current click-to-concordance flow
+   - trendline behavior, known "squishing" effect, and current transient trend drilldown flow
 
 ## Mental Model
 
@@ -35,8 +35,11 @@ The frontend does not own the yearly counts.
 - Plot trend points against actual year values, not array position.
 - Dominant years can visually flatten the rest of the series; this is a normal
   autoscaling effect, not necessarily a backend bug.
-- Trend points are clickable and should open concordances for the selected year
-  within the same active corpus context.
+- Trend drilldown should stay transient: do not rewrite the main search state
+  just to inspect a year bucket.
+- Trend points can expose concordance drilldown actions such as exact year or
+  `+/- 5 år`, but those should open against request-local year filters within
+  the same active corpus context.
 
 ## Important Files
 
@@ -53,6 +56,7 @@ Do:
 
 - verify backend `year-count` rows before diagnosing trend bugs as API bugs
 - preserve the user's active corpus constraints when drilling from trend to concordance
+- prefer transient modal drilldown over rewriting the main search state
 - keep trend explanations explicit when autoscaling can mislead users
 
 Don't:
@@ -60,3 +64,4 @@ Don't:
 - treat chart squishing as proof of a backend counting error
 - plot long trend series against point index when actual year spacing is known
 - make trend zoom silently change the corpus basis unless that is the intended feature
+- turn trend drilldown into a destructive mode-switch unless the user explicitly wants that
