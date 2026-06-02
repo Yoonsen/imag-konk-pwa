@@ -81,6 +81,12 @@ interface RenderResultContext {
   extraGeoTermsText: string | null;
 }
 
+interface SearchOverrides {
+  query?: string;
+  resultMode?: 'render' | 'count' | 'year-count';
+  yearRange?: [number, number];
+}
+
 interface ModalData {
   title: string;
   author: string;
@@ -120,7 +126,10 @@ const PLACE_RESOLVER_URL = 'https://api.nb.no/dhlab/imag/api/place/resolve';
 
 const numberFormatter = new Intl.NumberFormat('nb-NO');
 
-function buildYearCountResults(yearRows: YearCountRow[]): React.ReactNode {
+function buildYearCountResults(
+  yearRows: YearCountRow[],
+  onYearSelect?: (year: number) => void
+): React.ReactNode {
   const rows = yearRows
     .filter((row) => Number.isFinite(row.year))
     .map((row) => ({
@@ -137,16 +146,19 @@ function buildYearCountResults(yearRows: YearCountRow[]): React.ReactNode {
 
   const totalMatches = rows.reduce((sum, row) => sum + row.total, 0);
   const peakRow = rows.reduce((peak, row) => (row.total > peak.total ? row : peak), rows[0]);
+  const yearsWithHits = rows.filter((row) => row.total > 0).length;
+  const minYear = rows[0].year;
+  const maxYear = rows[rows.length - 1].year;
   const width = 720;
   const height = 240;
   const padding = { top: 16, right: 16, bottom: 32, left: 48 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const maxTotal = Math.max(...rows.map((row) => row.total), 1);
-  const points = rows.map((row, index) => {
-    const x = rows.length === 1
+  const points = rows.map((row) => {
+    const x = rows.length === 1 || minYear === maxYear
       ? padding.left + plotWidth / 2
-      : padding.left + (index / (rows.length - 1)) * plotWidth;
+      : padding.left + ((row.year - minYear) / (maxYear - minYear)) * plotWidth;
     const y = padding.top + plotHeight - (row.total / maxTotal) * plotHeight;
     return { ...row, x, y };
   });
@@ -170,7 +182,7 @@ function buildYearCountResults(yearRows: YearCountRow[]): React.ReactNode {
         </div>
         <div className="year-count-card">
           <strong>År med treff</strong>
-          <span>{numberFormatter.format(rows.length)}</span>
+          <span>{numberFormatter.format(yearsWithHits)}</span>
         </div>
       </div>
 
@@ -211,10 +223,16 @@ function buildYearCountResults(yearRows: YearCountRow[]): React.ReactNode {
               key={`year-point-${point.year}`}
               cx={point.x}
               cy={point.y}
-              r="3"
+              r="4"
               fill="#0d6efd"
+              style={onYearSelect ? { cursor: 'pointer' } : undefined}
+              onClick={onYearSelect ? () => onYearSelect(point.year) : undefined}
             >
-              <title>{`${point.year}: ${numberFormatter.format(point.total)} treff`}</title>
+              <title>
+                {onYearSelect
+                  ? `${point.year}: ${numberFormatter.format(point.total)} treff. Klikk for konkordanser i dette året.`
+                  : `${point.year}: ${numberFormatter.format(point.total)} treff`}
+              </title>
             </circle>
           ))}
           {axisLabelIndexes.map((index) => {
@@ -237,6 +255,7 @@ function buildYearCountResults(yearRows: YearCountRow[]): React.ReactNode {
 
       <div className="year-count-note">
         Kurven viser <code>rows[].year</code> mot <code>rows[].total</code>. <code>docs</code> og <code>filterDocs</code> beholdes i debug-data.
+        {onYearSelect ? ' Klikk et punkt for å åpne konkordanser for akkurat det året.' : ''}
       </div>
     </div>
   );
@@ -577,8 +596,13 @@ function App() {
     }
   }, [debugEnabled]);
 
-  const performSearch = async (overrideQuery?: string) => {
-    let trimmedQuery = (overrideQuery ?? query).trim();
+  const performSearch = async (overrideQueryOrOptions?: string | SearchOverrides) => {
+    const overrides: SearchOverrides = typeof overrideQueryOrOptions === 'string'
+      ? { query: overrideQueryOrOptions }
+      : (overrideQueryOrOptions ?? {});
+    let trimmedQuery = (overrides.query ?? query).trim();
+    const activeResultMode = overrides.resultMode ?? resultMode;
+    const activeYearRange = overrides.yearRange ?? yearRange;
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -733,7 +757,8 @@ function App() {
         return;
       }
 
-      // Filter URNs by selected categories, authors, and year range
+      // For trend mode, use the year range as the plotted viewport.
+      // Keep the corpus filter stable so zooming does not change the underlying slice.
       const filteredMetadata = metadataArray.filter(item => {
         const categoryMatch = selectedCategories.includes('All Categories') || 
           (item.category && selectedCategories.includes(item.category));
@@ -742,7 +767,9 @@ function App() {
           (item.author && selectedAuthors.includes(item.author));
         
         const year = Number(item.year ?? 0);
-        const yearMatch = year >= yearRange[0] && year <= yearRange[1];
+        const yearMatch = activeResultMode === 'year-count'
+          ? true
+          : year >= activeYearRange[0] && year <= activeYearRange[1];
         
         return categoryMatch && authorMatch && yearMatch;
       });
@@ -757,8 +784,8 @@ function App() {
       const hasFilterModalConstraints =
         !selectedCategories.includes('All Categories') ||
         selectedAuthors.length > 0 ||
-        yearRange[0] !== MIN_YEAR ||
-        yearRange[1] !== MAX_YEAR;
+        activeYearRange[0] !== MIN_YEAR ||
+        activeYearRange[1] !== MAX_YEAR;
       const baseFilterIds = persistentFilterIds
         ? (hasFilterModalConstraints ? filterIds : persistentFilterIds)
         : filterIds;
@@ -781,12 +808,12 @@ function App() {
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
       const usesAutoPhraseTermGroups = !!autoTermGroups && words.length >= 2;
       const usesFastNearProfile = usesInlineTermGroups || usesAutoPhraseTermGroups;
-      const usesNearQueryAggregate = resultMode === 'count' || resultMode === 'year-count';
-      const nearQueryMode = resultMode === 'year-count' ? 'year-count' : 'count';
-      const yearCountRange = resultMode === 'year-count'
+      const usesNearQueryAggregate = activeResultMode === 'count' || activeResultMode === 'year-count';
+      const nearQueryMode = activeResultMode === 'year-count' ? 'year-count' : 'count';
+      const yearCountRange = activeResultMode === 'year-count'
         ? {
-            startYear: yearRange[0],
-            endYear: yearRange[1]
+            startYear: activeYearRange[0],
+            endYear: activeYearRange[1]
           }
         : {};
 
@@ -811,7 +838,7 @@ function App() {
             termGroups: geoQuery.termGroups,
             useFilter,
             filterIds: useFilter ? effectiveFilterIds : [],
-            mode: resultMode === 'year-count' ? 'year-count' : resultMode,
+            mode: activeResultMode === 'year-count' ? 'year-count' : activeResultMode,
             perBook: effectivePerBook,
             totalLimit: effectiveTotalLimit,
             docSamples: effectiveDocSamples,
@@ -930,9 +957,9 @@ function App() {
           const authorText = selectedAuthors.length > 0
             ? ` by authors: ${selectedAuthors.join(', ')}`
             : '';
-          const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+          const yearText = activeYearRange[0] === MIN_YEAR && activeYearRange[1] === MAX_YEAR
             ? ''
-            : ` from ${yearRange[0]} to ${yearRange[1]}`;
+            : ` from ${activeYearRange[0]} to ${activeYearRange[1]}`;
           setStatus(`No results for "${trimmedQuery}"${categoryText}${authorText}${yearText}`);
           setResults(<p key="no-results">No results found for this query.</p>);
           setLastConcordanceRows([]);
@@ -951,7 +978,7 @@ function App() {
         (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
       );
 
-      if (endpointPath === "near_query" && resultMode === 'year-count') {
+      if (endpointPath === "near_query" && activeResultMode === 'year-count') {
         const yearCountResp: YearCountResponse = await concResp.json();
         const categoryText = selectedCategories.includes('All Categories')
           ? ''
@@ -959,9 +986,9 @@ function App() {
         const authorText = selectedAuthors.length > 0
           ? ` by authors: ${selectedAuthors.join(', ')}`
           : '';
-        const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+        const yearText = activeYearRange[0] === MIN_YEAR && activeYearRange[1] === MAX_YEAR
           ? ''
-          : ` from ${yearRange[0]} to ${yearRange[1]}`;
+          : ` from ${activeYearRange[0]} to ${activeYearRange[1]}`;
         const rows = Array.isArray(yearCountResp.rows)
           ? [...yearCountResp.rows].sort((a, b) => a.year - b.year)
           : [];
@@ -979,13 +1006,21 @@ function App() {
         );
         setLastConcordanceRows([]);
         setLastRenderContext(null);
-        setResults(buildYearCountResults(rows));
+        setResults(buildYearCountResults(rows, (year) => {
+          setResultMode('render');
+          setYearRange([year, year]);
+          void performSearch({
+            query: trimmedQuery,
+            resultMode: 'render',
+            yearRange: [year, year]
+          });
+        }));
         setDebugInfo({
           endpoint: endpointPath,
           queryMode: endpointPath,
           usedEngine: null,
           isGeoQuery: !!geoQuery.termGroups,
-          resultMode,
+          resultMode: activeResultMode,
           years: rows.length,
           total,
           peakYear: peakRow?.year ?? null,
@@ -998,7 +1033,7 @@ function App() {
         return;
       }
 
-      if (endpointPath === "near_query" && resultMode === 'count') {
+      if (endpointPath === "near_query" && activeResultMode === 'count') {
         const countResp: CountResponse = await concResp.json();
         const categoryText = selectedCategories.includes('All Categories')
           ? ''
@@ -1006,9 +1041,9 @@ function App() {
         const authorText = selectedAuthors.length > 0
           ? ` by authors: ${selectedAuthors.join(', ')}`
           : '';
-        const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+        const yearText = activeYearRange[0] === MIN_YEAR && activeYearRange[1] === MAX_YEAR
           ? ''
-          : ` from ${yearRange[0]} to ${yearRange[1]}`;
+          : ` from ${activeYearRange[0]} to ${activeYearRange[1]}`;
         const total = typeof countResp.total === 'number' ? countResp.total : 0;
         const docs = typeof countResp.docs === 'number' ? countResp.docs : 0;
 
@@ -1027,7 +1062,7 @@ function App() {
           queryMode: endpointPath,
           usedEngine: null,
           isGeoQuery: !!geoQuery.termGroups,
-          resultMode,
+          resultMode: activeResultMode,
           total,
           docs,
           responseMs: responseElapsedMs,
@@ -1058,9 +1093,9 @@ function App() {
       const authorText = selectedAuthors.length > 0
         ? ` by authors: ${selectedAuthors.join(', ')}`
         : '';
-      const yearText = yearRange[0] === MIN_YEAR && yearRange[1] === MAX_YEAR
+      const yearText = activeYearRange[0] === MIN_YEAR && activeYearRange[1] === MAX_YEAR
         ? ''
-        : ` from ${yearRange[0]} to ${yearRange[1]}`;
+        : ` from ${activeYearRange[0]} to ${activeYearRange[1]}`;
       const rows = Array.isArray(conc.rows) ? conc.rows : [];
       const renderedRows = Array.isArray(conc.rendered) ? conc.rendered : [];
       const mergedRows = geoQuery.terms && renderedRows.length > 0
@@ -1106,7 +1141,7 @@ function App() {
         queryMode: endpointPath,
         usedEngine,
         isGeoQuery: !!geoQuery.terms,
-        resultMode: (geoQuery.termGroups || (!!effectiveTermGroups && effectiveTermGroups.length > 1)) ? resultMode : null,
+        resultMode: (geoQuery.termGroups || (!!effectiveTermGroups && effectiveTermGroups.length > 1)) ? activeResultMode : null,
         rows: mergedRows.length,
         renderedRows: renderedRows.length,
         geoRenderedMergeApplied: !!geoQuery.terms && renderedRows.length > 0,
