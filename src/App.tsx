@@ -1,6 +1,35 @@
 import React, { useState, useEffect, useRef } from 'react';
+import {
+  Alert,
+  Button,
+  Dialog,
+  DialogBlock,
+  Heading,
+  Paragraph
+} from '@digdir/designsystemet-react';
 import './App.css';
 import * as XLSX from 'xlsx';
+import DOMPurify from 'dompurify';
+import { CorpusPanel } from './components/CorpusPanel';
+import { ExportPanel } from './components/ExportPanel';
+import { PanelRail, type WorkspacePanelId } from './components/PanelRail';
+import { ResultsPanel } from './components/ResultsPanel';
+import { SearchPanel, SearchSettingsPanel } from './components/SearchPanel';
+import { WorkspacePanel } from './components/WorkspacePanel';
+import {
+  FULL_EXPORT_LIMIT,
+  buildCountRequest,
+  buildFullExportRequest,
+  isExportWithinLimit,
+  isObviouslyBroadExportQuery,
+  normalizeSearchParameters,
+  type ResultMode
+} from './lib/searchRequests';
+import {
+  downloadCsv,
+  safeFilenamePart,
+  type ConcordanceExportRow
+} from './lib/csvExport';
 
 interface Metadata {
   id: number;
@@ -83,7 +112,7 @@ interface RenderResultContext {
 
 interface SearchOverrides {
   query?: string;
-  resultMode?: 'render' | 'count' | 'year-count';
+  resultMode?: ResultMode;
   yearRange?: [number, number];
 }
 
@@ -264,28 +293,30 @@ function buildYearCountResults(
             {typeof activeYear.docs === 'number' ? ` i ${numberFormatter.format(activeYear.docs)} dokumenter` : ''}
           </div>
           <div className="year-count-action-buttons">
-            <button
+            <Button
               type="button"
-              className="btn btn-sm btn-outline-primary"
+              data-size="sm"
+              variant="secondary"
               onClick={() => onYearSelect(activeYear.year, 'exact')}
             >
               Dette året
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-sm btn-outline-secondary"
+              data-size="sm"
+              variant="tertiary"
               onClick={() => onYearSelect(activeYear.year, 'window5')}
               title={`Vis konkordanser for ${activeYear.year - 5} til ${activeYear.year + 5}`}
             >
               +/- 5 år
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
 
       <div className="year-count-note">
-        Kurven viser <code>rows[].year</code> mot <code>rows[].total</code>. <code>docs</code> og <code>filterDocs</code> beholdes i debug-data.
-        {onYearSelect ? ' Hold pekeren over et punkt for å velge år og åpne konkordanser transient.' : ''}
+        Kurven viser hvordan treffene fordeler seg over tid.
+        {onYearSelect ? ' Velg et punkt for å åpne konkordanser fra året.' : ''}
       </div>
     </div>
   );
@@ -306,16 +337,14 @@ function App() {
   const [docSamples, setDocSamples] = useState<number>(50);
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
-  const [resultMode, setResultMode] = useState<'render' | 'count' | 'year-count'>('render');
+  const [resultMode, setResultMode] = useState<ResultMode>('render');
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
   const [results, setResults] = useState<React.ReactNode>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);
-  const [showFilterModal, setShowFilterModal] = useState(false);
-  const [showSearchParamsModal, setShowSearchParamsModal] = useState(false);
-  const [showHelpModal, setShowHelpModal] = useState(false);
+  const [activePanel, setActivePanel] = useState<WorkspacePanelId | null>(null);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
   const [lastRenderContext, setLastRenderContext] = useState<RenderResultContext | null>(null);
@@ -336,8 +365,38 @@ function App() {
   });
   const [debugRequest, setDebugRequest] = useState<Record<string, unknown> | null>(null);
   const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
+  const [estimatedExportTotal, setEstimatedExportTotal] = useState<number | null>(null);
+  const [exportStatus, setExportStatus] = useState('');
+  const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const corpusPanelButtonRef = useRef<HTMLButtonElement>(null);
+  const parametersPanelButtonRef = useRef<HTMLButtonElement>(null);
+  const exportPanelButtonRef = useRef<HTMLButtonElement>(null);
+  const helpPanelButtonRef = useRef<HTMLButtonElement>(null);
   const baseMetadataByIdRef = useRef<Map<number, Metadata>>(new Map());
+  const exportAbortControllerRef = useRef<AbortController | null>(null);
+  const panelButtonRefs = {
+    corpus: corpusPanelButtonRef,
+    parameters: parametersPanelButtonRef,
+    export: exportPanelButtonRef,
+    help: helpPanelButtonRef
+  };
+
+  const closeActivePanel = () => {
+    const panelToFocus = activePanel;
+    setActivePanel(null);
+    if (panelToFocus) {
+      window.requestAnimationFrame(() => panelButtonRefs[panelToFocus].current?.focus());
+    }
+  };
+
+  const togglePanel = (panel: WorkspacePanelId) => {
+    if (activePanel === panel) {
+      closeActivePanel();
+    } else {
+      setActivePanel(panel);
+    }
+  };
 
   const buildFilterSelection = (
     activeYearRange: [number, number],
@@ -559,8 +618,12 @@ function App() {
 
   const withGeoAnnotationTitles = (html: string): string => {
     if (!html || typeof window === 'undefined') return html;
+    const sanitizedHtml = DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: ['annotation', 'mark', 'span', 'em', 'strong', 'b', 'i', 'br'],
+      ALLOWED_ATTR: ['data-layer', 'data-geo-id', 'data-id', 'data-label', 'title', 'class']
+    });
     const parser = new DOMParser();
-    const doc = parser.parseFromString(`<div id="geo-wrap">${html}</div>`, 'text/html');
+    const doc = parser.parseFromString(`<div id="geo-wrap">${sanitizedHtml}</div>`, 'text/html');
     const wrapper = doc.getElementById('geo-wrap');
     if (!wrapper) return html;
 
@@ -673,6 +736,35 @@ function App() {
     }
   }, [debugEnabled]);
 
+  useEffect(() => {
+    if (!activePanel) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeActivePanel();
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [activePanel]);
+
+  useEffect(() => {
+    setEstimatedExportTotal(null);
+    setExportStatus('');
+  }, [
+    query,
+    selectedAuthors,
+    selectedCategories,
+    yearRange,
+    persistentFilterIds,
+    nearWindow,
+    beforeWindow,
+    afterWindow,
+    maxVariants,
+    termGroupsInput,
+    isSymmetric
+  ]);
+
   const performSearch = async (overrideQueryOrOptions?: string | SearchOverrides) => {
     const overrides: SearchOverrides = typeof overrideQueryOrOptions === 'string'
       ? { query: overrideQueryOrOptions }
@@ -745,9 +837,9 @@ function App() {
             }))
           });
           setResults(
-            <div className="concordance">
+            <div className="place-choices">
               <p><strong>Mulige steder for "{geoResolverInput.placeText}"</strong></p>
-              <div className="list-group">
+              <div className="choice-list">
                 {resolverMatches.map((match) => {
                   const nextQuery = buildResolvedGeoQuery(match.id, geoResolverInput.remainder, geoResolverInput.bracketed);
                   const alternateForms = (match.alternateForms || []).filter(Boolean).slice(0, 5);
@@ -755,41 +847,41 @@ function App() {
                     <button
                       key={`${match.id}-${match.country ?? 'unknown'}`}
                       type="button"
-                      className="list-group-item list-group-item-action"
+                      className="choice-button"
                       title={`Bruk ${match.canonicalName || match.id}`}
                       onClick={() => {
                         setQuery(nextQuery);
                         void performSearch(nextQuery);
                       }}
                     >
-                      <div className="d-flex justify-content-between align-items-start gap-3">
-                        <div className="text-start">
-                          <div className="fw-semibold">{match.canonicalName || match.id}</div>
-                          <div className="small text-muted">
+                      <div className="choice-button__header">
+                        <div>
+                          <strong>{match.canonicalName || match.id}</strong>
+                          <div className="secondary-text">
                             id: {match.id}
                             {match.country ? ` | ${match.country}` : ''}
                           </div>
                         </div>
                         {match.matchType && (
-                          <span className="badge text-bg-secondary text-uppercase">{match.matchType}</span>
+                          <span className="choice-badge">{match.matchType}</span>
                         )}
                       </div>
                       {match.matchedForm && (
-                        <div className="small mt-1">
+                        <div className="secondary-text">
                           <strong>Treffform:</strong> {match.matchedForm}
                         </div>
                       )}
                       {(match.lat !== undefined || match.lon !== undefined) && (
-                        <div className="small text-muted">
+                        <div className="secondary-text">
                           koordinater: {match.lat ?? '?'}{match.lon !== undefined ? `, ${match.lon}` : ''}
                         </div>
                       )}
                       {alternateForms.length > 0 && (
-                        <div className="small text-muted">
+                        <div className="secondary-text">
                           alternativer: {alternateForms.join(', ')}
                         </div>
                       )}
-                      <div className="small text-primary mt-1">Klikk for å bruke dette stedet</div>
+                      <div className="choice-button__action">Klikk for å bruke dette stedet</div>
                     </button>
                   );
                 })}
@@ -849,16 +941,26 @@ function App() {
         setResults(<p key="no-filter-results">No documents match the selected filters.</p>);
         return;
       }
-      const normalizedNearWindow = Math.max(1, Math.floor(nearWindow) || 1);
-      const normalizedBefore = Math.max(0, Math.floor(beforeWindow) || 0);
-      const normalizedAfter = Math.max(0, Math.floor(afterWindow) || 0);
+      const normalizedParameters = normalizeSearchParameters({
+        resultMode: activeResultMode,
+        perBook,
+        docSamples,
+        totalLimit,
+        nearWindow,
+        beforeWindow,
+        afterWindow,
+        maxVariants
+      });
+      const normalizedNearWindow = normalizedParameters.nearWindow;
+      const normalizedBefore = normalizedParameters.beforeWindow;
+      const normalizedAfter = normalizedParameters.afterWindow;
       const normalizedOrQueryBefore = Math.max(1, normalizedBefore);
       const normalizedOrQueryAfter = Math.max(1, normalizedAfter);
-      const normalizedPerBook = Math.max(1, Math.floor(perBook) || 1);
-      const normalizedDocSamples = Math.max(0, Math.floor(docSamples) || 0);
-      const normalizedTotalLimit = Math.max(1, Math.floor(totalLimit) || 1);
+      const normalizedPerBook = normalizedParameters.perBook;
+      const normalizedDocSamples = normalizedParameters.docSamples;
+      const normalizedTotalLimit = normalizedParameters.totalLimit;
       const normalizedOrQueryTotalLimit = Math.min(normalizedTotalLimit, 5000);
-      const normalizedMaxVariants = Math.max(1, Math.floor(maxVariants) || 1);
+      const normalizedMaxVariants = normalizedParameters.maxVariants;
       const effectiveMatchMode: 'sequence' | 'near' = hasQuotedPhrase ? 'sequence' : 'near';
       const usesOrQuery = !!effectiveTermGroups && effectiveTermGroups.length === 1;
       const usesInlineTermGroups = !!parsedTermGroups && !termGroupsInput.trim() && trimmedQuery.includes('[');
@@ -1050,6 +1152,7 @@ function App() {
           ? [...yearCountResp.rows].sort((a, b) => a.year - b.year)
           : [];
         const total = rows.reduce((sum, row) => sum + (typeof row.total === 'number' ? row.total : 0), 0);
+        setEstimatedExportTotal(total);
         const peakRow = rows.reduce<YearCountRow | null>((peak, row) => {
           const currentTotal = typeof row.total === 'number' ? row.total : 0;
           const peakTotal = peak && typeof peak.total === 'number' ? peak.total : -1;
@@ -1099,6 +1202,7 @@ function App() {
           : ` from ${activeYearRange[0]} to ${activeYearRange[1]}`;
         const total = typeof countResp.total === 'number' ? countResp.total : 0;
         const docs = typeof countResp.docs === 'number' ? countResp.docs : 0;
+        setEstimatedExportTotal(total);
 
         setStatus(`Found ${total} matches for "${trimmedQuery}"${categoryText}${authorText}${yearText} (docs: ${docs}, ${responseElapsedMs} ms)`);
         setLastConcordanceRows([]);
@@ -1229,6 +1333,13 @@ function App() {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResultModeChange = (nextMode: ResultMode) => {
+    setResultMode(nextMode);
+    if (query.trim()) {
+      void performSearch({ resultMode: nextMode });
     }
   };
 
@@ -1544,6 +1655,188 @@ function App() {
     }
   };
 
+  const prepareExportContext = (queryText: string) => {
+    const trimmedQuery = queryText.trim();
+    if (!trimmedQuery) {
+      throw new Error('Skriv inn og kjør et søk før du eksporterer.');
+    }
+    if (isObviouslyBroadExportQuery(trimmedQuery)) {
+      throw new Error('Dette søket er for bredt for batch-eksport. Legg til ord eller snevre inn subkorpuset.');
+    }
+    if (parseResolvableGeoInput(trimmedQuery)) {
+      throw new Error('Velg først et konkret sted i Konk, Telling eller Trend før eksport.');
+    }
+
+    const geoQuery = parseGeoQuery(trimmedQuery);
+    if (geoQuery.invalid) {
+      throw new Error('Geo-søket er ugyldig.');
+    }
+
+    const hasQuotedPhrase = /^"[^"]+"$/.test(trimmedQuery);
+    const normalizedQuery = hasQuotedPhrase ? trimmedQuery.slice(1, -1).trim() : trimmedQuery;
+    const words = normalizedQuery.split(/\s+/).filter(Boolean);
+    const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
+    const parsedTermGroups = termGroupsSource ? parseTermGroups(termGroupsSource) : null;
+    const autoTermGroups =
+      !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 1
+        ? toSingleTermGroups(normalizedQuery)
+        : null;
+    const effectiveTermGroups =
+      geoQuery.terms || geoQuery.termGroups ? null : (parsedTermGroups ?? autoTermGroups);
+    const exportTermGroups = geoQuery.termGroups ?? effectiveTermGroups;
+
+    if (!geoQuery.terms && (!exportTermGroups || exportTermGroups.length === 0)) {
+      throw new Error('Fant ingen gyldige søkegrupper for eksport.');
+    }
+
+    const { filteredMetadata, effectiveFilterIds, useFilter } = buildFilterSelection(yearRange, false);
+    if (filteredMetadata.length === 0) {
+      throw new Error('Ingen dokumenter matcher det aktive subkorpuset.');
+    }
+
+    const normalized = normalizeSearchParameters({
+      resultMode: 'render',
+      perBook,
+      docSamples,
+      totalLimit,
+      nearWindow,
+      beforeWindow,
+      afterWindow,
+      maxVariants
+    });
+
+    return {
+      requestContext: {
+        terms: geoQuery.terms,
+        termGroups: exportTermGroups,
+        useFilter,
+        filterIds: effectiveFilterIds,
+        nearWindow: normalized.nearWindow,
+        beforeWindow: normalized.beforeWindow,
+        afterWindow: normalized.afterWindow,
+        maxVariants: normalized.maxVariants,
+        symmetric: isSymmetric,
+        matchMode: hasQuotedPhrase ? 'sequence' as const : 'near' as const
+      },
+      filteredMetadata,
+      trimmedQuery
+    };
+  };
+
+  const handleFullCsvExport = async () => {
+    let prepared: ReturnType<typeof prepareExportContext>;
+    try {
+      prepared = prepareExportContext(query);
+    } catch (error) {
+      setExportStatus(`Feil: ${error instanceof Error ? error.message : 'Ukjent eksportfeil'}`);
+      return;
+    }
+
+    const controller = new AbortController();
+    exportAbortControllerRef.current = controller;
+    setIsExporting(true);
+    setExportStatus('Teller treff før eksport ...');
+
+    try {
+      const countRequest = buildCountRequest(prepared.requestContext);
+      const countResponse = await fetch(
+        `https://api.nb.no/dhlab/imag/${countRequest.endpoint}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(countRequest.body),
+          signal: controller.signal
+        }
+      );
+      if (!countResponse.ok) {
+        throw new Error(`Telling feilet (${countResponse.status}): ${await countResponse.text()}`);
+      }
+      const countPayload: CountResponse = await countResponse.json();
+      const total = typeof countPayload.total === 'number' ? countPayload.total : 0;
+      setEstimatedExportTotal(total);
+
+      if (!isExportWithinLimit(total)) {
+        setExportStatus(
+          `Eksport blokkert: søket har ${numberFormatter.format(total)} treff. ` +
+          `Snevre inn søket eller subkorpuset til høyst ${numberFormatter.format(FULL_EXPORT_LIMIT)} treff.`
+        );
+        return;
+      }
+      if (total === 0) {
+        setExportStatus('Ingen konkordanser å eksportere.');
+        return;
+      }
+
+      const confirmed = window.confirm(
+        `Hent ${numberFormatter.format(total)} konkordanser som CSV? ` +
+        `Eksporten bruker det aktive subkorpuset og kan ta litt tid.`
+      );
+      if (!confirmed) {
+        setExportStatus('Eksport avbrutt før nedlasting.');
+        return;
+      }
+
+      setExportStatus(`Henter opptil ${numberFormatter.format(FULL_EXPORT_LIMIT)} konkordanser ...`);
+      const exportRequest = buildFullExportRequest(prepared.requestContext);
+      const exportResponse = await fetch(
+        `https://api.nb.no/dhlab/imag/${exportRequest.endpoint}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(exportRequest.body),
+          signal: controller.signal
+        }
+      );
+      if (!exportResponse.ok) {
+        throw new Error(`Konkordanshenting feilet (${exportResponse.status}): ${await exportResponse.text()}`);
+      }
+
+      const payload: ConcordanceResponse = await exportResponse.json();
+      const rows = Array.isArray(payload.rows) ? payload.rows : [];
+      const metadataById = new Map(
+        prepared.filteredMetadata.map((metadata) => [Number(metadata.id), metadata])
+      );
+      const exportRows: ConcordanceExportRow[] = rows.map((row) => {
+        const metadata = metadataById.get(Number(row.bookId));
+        return {
+          dhlabid: row.bookId,
+          pos: typeof row.pos === 'number' ? row.pos : '',
+          frag: row.fragRaw ?? row.frag ?? row.surfaceText ?? '',
+          urn: metadata?.urn ?? '',
+          title: metadata?.title ?? '',
+          author: metadata?.author ?? '',
+          year: metadata?.year ?? '',
+          category: metadata?.category ?? ''
+        };
+      });
+
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      downloadCsv(
+        exportRows,
+        `konkordanser-${safeFilenamePart(prepared.trimmedQuery)}-${dateStamp}.csv`
+      );
+      const possibleTruncation = rows.length >= FULL_EXPORT_LIMIT || rows.length !== total;
+      setExportStatus(
+        possibleTruncation
+          ? `Lastet ned ${numberFormatter.format(rows.length)} rader. Antallet avviker fra tellingen; kontroller om uttrekket er avkortet.`
+          : `Lastet ned et komplett sett på ${numberFormatter.format(rows.length)} konkordanser.`
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setExportStatus('Eksporten ble avbrutt.');
+      } else {
+        setExportStatus(`Feil: ${error instanceof Error ? error.message : 'Ukjent eksportfeil'}`);
+      }
+    } finally {
+      exportAbortControllerRef.current = null;
+      setIsExporting(false);
+    }
+  };
+
+  const handleCancelExport = () => {
+    exportAbortControllerRef.current?.abort();
+  };
+
   const handleDownloadConcordance = () => {
     if (lastConcordanceRows.length === 0) {
       alert('No concordance results to download yet.');
@@ -1585,10 +1878,6 @@ function App() {
     }
   };
 
-  const handleAuthorSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setAuthorSearch(e.target.value);
-  };
-
   const handleAuthorSelect = (author: string) => {
     if (!selectedAuthors.includes(author)) {
       setSelectedAuthors([...selectedAuthors, author]);
@@ -1616,15 +1905,6 @@ function App() {
       : [...withoutAll, category];
 
     setSelectedCategories(nextCategories.length > 0 ? nextCategories : ['All Categories']);
-  };
-
-  const handleYearRangeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseInt(e.target.value);
-    if (e.target.name === 'minYear') {
-      setYearRange([value, yearRange[1]]);
-    } else {
-      setYearRange([yearRange[0], value]);
-    }
   };
 
   const buildConcordanceResults = (rows: ConcordanceRow[], context: RenderResultContext): React.ReactNode[] => {
@@ -1661,9 +1941,17 @@ function App() {
 
             handleConcordanceClick(metadata, baseUrnLink);
           }}
+          role="button"
+          tabIndex={metadata ? 0 : -1}
+          onKeyDown={(event) => {
+            if (metadata && (event.key === 'Enter' || event.key === ' ')) {
+              event.preventDefault();
+              handleConcordanceClick(metadata, baseUrnLink);
+            }
+          }}
         >
           {debugEnabled && (
-            <div className="text-muted" style={{ fontSize: "11px" }}>
+            <div className="concordance__debug">
               dhlabid: {row.bookId}
             </div>
           )}
@@ -1671,603 +1959,246 @@ function App() {
             ? <p dangerouslySetInnerHTML={{ __html: textHtml }} />
             : textRaw
               ? <p>{textRaw}</p>
-              : <p className="text-muted fst-italic">Ingen fragmenttekst fra backend.</p>}
+              : <p className="empty-fragment">Ingen fragmenttekst fra backend.</p>}
         </div>
       );
     });
   };
 
+  const activeCorpus = buildFilterSelection(yearRange, false);
+  const sourceLabel = persistentFilterIds ? 'Opplastet subkorpus' : 'ImagiNation-korpuset';
+  const panelTitles: Record<WorkspacePanelId, string> = {
+    corpus: 'Subkorpus',
+    parameters: 'Parametre',
+    export: 'Eksport',
+    help: 'Hjelp'
+  };
+
+  const renderActivePanel = () => {
+    if (activePanel === 'corpus') {
+      return (
+        <CorpusPanel
+          sourceLabel={sourceLabel}
+          selectedDocuments={activeCorpus.filteredMetadata.length}
+          totalDocuments={metadataArray.length}
+          selectedAuthors={selectedAuthors}
+          selectedCategories={selectedCategories}
+          categories={CATEGORIES}
+          yearRange={yearRange}
+          fullYearRange={[MIN_YEAR, MAX_YEAR]}
+          authorSearch={authorSearch}
+          authorSuggestions={filteredAuthors}
+          onAuthorSearchChange={setAuthorSearch}
+          onAuthorSelect={handleAuthorSelect}
+          onAuthorRemove={handleAuthorRemove}
+          onCategoryToggle={handleCategoryToggle}
+          onYearChange={(boundary, value) => {
+            setYearRange(boundary === 'min' ? [value, yearRange[1]] : [yearRange[0], value]);
+          }}
+          onReset={() => {
+            setSelectedAuthors([]);
+            setSelectedCategories(['All Categories']);
+            setYearRange([MIN_YEAR, MAX_YEAR]);
+          }}
+          onUpload={handleCorpusUploadClick}
+        />
+      );
+    }
+    if (activePanel === 'parameters') {
+      return (
+        <SearchSettingsPanel
+          query={query}
+          resultMode={resultMode}
+          perBook={perBook}
+          docSamples={docSamples}
+          totalLimit={totalLimit}
+          nearWindow={nearWindow}
+          beforeWindow={beforeWindow}
+          afterWindow={afterWindow}
+          maxVariants={maxVariants}
+          termGroupsInput={termGroupsInput}
+          isSymmetric={isSymmetric}
+          onPerBookChange={setPerBook}
+          onDocSamplesChange={setDocSamples}
+          onTotalLimitChange={setTotalLimit}
+          onNearWindowChange={setNearWindow}
+          onBeforeWindowChange={setBeforeWindow}
+          onAfterWindowChange={setAfterWindow}
+          onMaxVariantsChange={setMaxVariants}
+          onTermGroupsInputChange={setTermGroupsInput}
+          onSymmetricChange={setIsSymmetric}
+        />
+      );
+    }
+    if (activePanel === 'export') {
+      return (
+        <ExportPanel
+          query={query}
+          selectedDocuments={activeCorpus.filteredMetadata.length}
+          previewRows={lastConcordanceRows.length}
+          estimatedTotal={estimatedExportTotal}
+          exportStatus={exportStatus}
+          isExporting={isExporting}
+          canExport={query.trim().length > 0 && activeCorpus.filteredMetadata.length > 0}
+          onDownloadPreview={handleDownloadConcordance}
+          onDownloadFull={() => { void handleFullCsvExport(); }}
+          onCancelExport={handleCancelExport}
+        />
+      );
+    }
+    if (activePanel === 'help') {
+      return (
+        <div className="settings-stack help-content">
+          <Alert data-color="info">
+            Start gjerne med Telling eller Trend. Bruk Konk for å kontrollere et sample før du eksporterer.
+          </Alert>
+          <Paragraph><strong>Vanlig søk:</strong> <code>norge</code> eller <code>norge sverige</code>.</Paragraph>
+          <Paragraph><strong>Frase:</strong> <code>&quot;norge i krig&quot;</code> krever samme rekkefølge.</Paragraph>
+          <Paragraph><strong>Wildcard:</strong> <code>elskov*</code> finner flere bøyninger og skrivemåter.</Paragraph>
+          <Paragraph><strong>Termgrupper:</strong> <code>[elskov, kjærlighed] kvinne</code> bruker OR inni gruppen og AND mellom grupper.</Paragraph>
+          <Paragraph><strong>Sted:</strong> <code>#geo krig</code>, <code>#geo:&quot;Rio de Janeiro&quot;</code> eller <code>#geo:1032414</code>.</Paragraph>
+          <Paragraph><strong>Eksport:</strong> komplett CSV krever høyst {FULL_EXPORT_LIMIT.toLocaleString('nb-NO')} treff.</Paragraph>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => setDebugEnabled(!debugEnabled)}
+          >
+            {debugEnabled ? 'Skjul debug' : 'Vis debug'}
+          </Button>
+          {debugEnabled ? (
+            <details className="debug-panel" open>
+              <summary>Teknisk request og respons</summary>
+              <pre>{JSON.stringify({ request: debugRequest, info: debugInfo }, null, 2)}</pre>
+            </details>
+          ) : null}
+        </div>
+      );
+    }
+    return null;
+  };
+
   return (
-    <div className="container my-4">
-      <h1 className="text-center mb-4 d-flex justify-content-center align-items-center gap-2">
-        <span>ImagiNation Concordances</span>
-        <button
-          className="btn btn-sm btn-outline-secondary rounded-circle d-inline-flex align-items-center justify-content-center"
-          type="button"
-          onClick={() => setShowHelpModal(true)}
-          title="Søkehjelp og eksempler"
-          aria-label="Søkehjelp og eksempler"
-          style={{ width: "30px", height: "30px", padding: 0 }}
-        >
-          <i className="bi bi-info-circle"></i>
-        </button>
-      </h1>
-      <div className="row justify-content-center mb-3">
-        <div className="col-md-8">
-          <div className="d-flex flex-wrap flex-md-nowrap align-items-start gap-1">
-            <div className="input-group flex-grow-1" style={{ minWidth: "200px" }}>
-              <button
-                className="btn btn-primary"
-                type="button"
-                onClick={() => {
-                  void performSearch();
-                }}
-                disabled={isLoading}
-                title="Search"
-              >
-                <i className="bi bi-search"></i>
-              </button>
-              <input
-                type="text"
-                className="form-control"
-                placeholder='f.eks. norge, "norge i krig", #geo krig, #geo:1032414'
-                title='Eksempler: norge | "norge i krig" | #geo | #geo krig | #geo:"Rio de Janeiro" | #geo:1032414 | #geo:nb:1032414'
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter') {
-                    void performSearch();
-                  }
-                }}
-              />
-            </div>
-
-            <div className="d-flex flex-wrap flex-md-nowrap align-items-start gap-1">
-              <div className="btn-group" role="group" aria-label="Result mode actions">
-                <button
-                  className={`btn ${resultMode === 'render' ? 'btn-secondary' : 'btn-outline-secondary'}`}
-                  type="button"
-                  onClick={() => setResultMode('render')}
-                  title="Vis konkordanser"
-                >
-                  Konk
-                </button>
-                <button
-                  className={`btn ${resultMode === 'count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
-                  type="button"
-                  onClick={() => setResultMode('count')}
-                  title="Vis telling"
-                >
-                  Tell
-                </button>
-                <button
-                  className={`btn ${resultMode === 'year-count' ? 'btn-secondary' : 'btn-outline-secondary'}`}
-                  type="button"
-                  onClick={() => setResultMode('year-count')}
-                  title="Vis telling per år"
-                >
-                  Trend
-                </button>
-              </div>
-
-              <div className="btn-group" role="group" aria-label="Korpus actions">
-                <button 
-                  className="btn btn-outline-secondary"
-                  type="button"
-                  onClick={() => setShowFilterModal(true)}
-                  title="Korpusfiltrering"
-                >
-                  <i className="bi bi-tools"></i>
-                </button>
-                <button
-                  className="btn btn-outline-secondary"
-                  type="button"
-                  onClick={handleCorpusUploadClick}
-                  title="Upload corpus Excel file"
-                >
-                  <i className="bi bi-file-earmark-spreadsheet"></i>
-                </button>
-                <button
-                  className="btn btn-outline-secondary"
-                  type="button"
-                  onClick={() => setShowSearchParamsModal(true)}
-                  title="Søkeparametre"
-                >
-                  <i className="bi bi-sliders"></i>
-                </button>
-              </div>
-
-              <div className="btn-group" role="group" aria-label="Debug actions">
-                <button
-                  className={`btn ${debugEnabled ? 'btn-warning' : 'btn-outline-secondary'}`}
-                  type="button"
-                  onClick={() => setDebugEnabled(!debugEnabled)}
-                  title="Toggle debug mode"
-                >
-                  <i className="bi bi-bug"></i>
-                </button>
-              </div>
-
-              <div className="btn-group" role="group" aria-label="Download actions">
-                <button
-                  className="btn btn-outline-secondary"
-                  type="button"
-                  onClick={handleDownloadConcordance}
-                  title="Download concordance (.xlsx)"
-                  disabled={lastConcordanceRows.length === 0}
-                >
-                  <i className="bi bi-download"></i>
-                </button>
-              </div>
-            </div>
+    <>
+      <a className="skip-link" href="#search-workspace">Hopp til søk</a>
+      <header className="app-header">
+        <div className="app-header__content">
+          <div>
+            <span className="app-kicker">Digitalt korpusverktøy</span>
+            <Heading level={1} data-size="md">ImagiNation-konkordanser</Heading>
           </div>
+          <span className="header-corpus-count">
+            {activeCorpus.filteredMetadata.length.toLocaleString('nb-NO')} dokumenter
+          </span>
+        </div>
+      </header>
+
+      <main className={`app-workspace${activePanel ? ' app-workspace--panel-open' : ''}`}>
+        <PanelRail
+          activePanel={activePanel}
+          documentCount={activeCorpus.filteredMetadata.length}
+          exportCount={estimatedExportTotal}
+          buttonRefs={panelButtonRefs}
+          onToggle={togglePanel}
+        />
+        {activePanel ? (
+          <WorkspacePanel title={panelTitles[activePanel]} onClose={closeActivePanel}>
+            {renderActivePanel()}
+          </WorkspacePanel>
+        ) : null}
+
+        <div className="workspace-main" id="search-workspace">
+          <SearchPanel
+            query={query}
+            resultMode={resultMode}
+            isLoading={isLoading}
+            onQueryChange={setQuery}
+            onResultModeChange={handleResultModeChange}
+            onSearch={() => { void performSearch(); }}
+          />
+
+          <ResultsPanel status={status} isLoading={isLoading}>
+            {lastRenderContext && lastConcordanceRows.length > 0 ? (
+              <>
+                <Paragraph data-size="sm" className="result-explanation">
+                  Konk viser et samplet utvalg. Velg en konkordans for bokinformasjon og lenke til Nettbiblioteket.
+                </Paragraph>
+                {buildConcordanceResults(lastConcordanceRows, lastRenderContext)}
+              </>
+            ) : trendRows && trendRows.length > 0 ? (
+              buildYearCountResults(
+                trendRows,
+                (year, span) => { void openTrendConcordancesForYear(year, trendQuery, span); },
+                trendHoverRow,
+                (row) => setTrendHoverRow(row)
+              )
+            ) : (
+              results ?? <Paragraph>Skriv inn et søk for å se resultater.</Paragraph>
+            )}
+          </ResultsPanel>
+
           <input
             ref={fileInputRef}
+            className="visually-hidden-file"
             type="file"
             accept=".xlsx,.xls,.csv"
-            style={{ display: 'none' }}
             onChange={handleCorpusFileChange}
+            tabIndex={-1}
           />
         </div>
-      </div>
-      <div className="border p-3" style={{ overflowY: "auto", height: "calc(100vh - 200px)" }}>
-        <div style={{ fontSize: "12px", marginBottom: "10px", color: "#555" }}>{status}</div>
-        {debugEnabled && (
-          <div className="accordion mb-3" id="debugAccordion">
-            <div className="accordion-item">
-              <h2 className="accordion-header" id="debugHeading">
-                <button
-                  className="accordion-button collapsed py-2"
-                  type="button"
-                  data-bs-toggle="collapse"
-                  data-bs-target="#debugCollapse"
-                  aria-expanded="false"
-                  aria-controls="debugCollapse"
-                >
-                  Debug
-                </button>
-              </h2>
-              <div
-                id="debugCollapse"
-                className="accordion-collapse collapse"
-                aria-labelledby="debugHeading"
-                data-bs-parent="#debugAccordion"
-              >
-                <div className="accordion-body py-2 px-3" style={{ fontSize: "12px" }}>
-                  <pre style={{ marginBottom: 0, whiteSpace: "pre-wrap" }}>
-                    {JSON.stringify({ request: debugRequest, info: debugInfo }, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-        {lastRenderContext && lastConcordanceRows.length > 0 ? (
-          <>
-            <div className="small text-muted mb-2">
-              Konk viser treffene som er hentet ut med innstillingene i verktøymenyen. Trykk på en konkordans for bokinfo og lenke til Nettbiblioteket.
-            </div>
-            {buildConcordanceResults(lastConcordanceRows, lastRenderContext)}
-          </>
-        ) : trendRows && trendRows.length > 0 ? (
-          buildYearCountResults(
-            trendRows,
-            (year, span) => { void openTrendConcordancesForYear(year, trendQuery, span); },
-            trendHoverRow,
-            (row) => setTrendHoverRow(row)
-          )
-        ) : (
-          results
-        )}
-      </div>
+      </main>
 
-      {/* Results Modal */}
-      <div className={`modal fade ${showModal ? 'show' : ''}`} 
-           style={{ display: showModal ? 'block' : 'none' }} 
-           tabIndex={-1} 
-           role="dialog">
-        <div className="modal-dialog" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">{modalData?.title}</h5>
-              <button 
-                type="button" 
-                className="btn-close" 
-                onClick={() => setShowModal(false)}
-                aria-label="Close"
-              ></button>
-            </div>
-            <div className="modal-body">
-              <p><strong>Author:</strong> {modalData?.author}</p>
-              <p><strong>Year:</strong> {modalData?.year}</p>
-              <p><strong>Category:</strong> {modalData?.category}</p>
-              <p><strong>dhlabid:</strong> {modalData?.dhlabid}</p>
-            </div>
-            <div className="modal-footer">
-              <a 
-                href={modalData?.link} 
-                target="_blank" 
-                rel="noopener noreferrer" 
-                className="btn btn-primary"
-              >
-                View in National Library
+      <Dialog open={showModal} onClose={() => setShowModal(false)} closedby="any">
+        <DialogBlock>
+          <Heading level={2} data-size="md">{modalData?.title || 'Bokinformasjon'}</Heading>
+        </DialogBlock>
+        <DialogBlock>
+          <dl className="metadata-list">
+            <div><dt>Forfatter</dt><dd>{modalData?.author}</dd></div>
+            <div><dt>År</dt><dd>{modalData?.year}</dd></div>
+            <div><dt>Kategori</dt><dd>{modalData?.category}</dd></div>
+            <div><dt>dhlabid</dt><dd>{modalData?.dhlabid}</dd></div>
+          </dl>
+        </DialogBlock>
+        <DialogBlock className="dialog-actions">
+          {modalData?.link ? (
+            <Button asChild>
+              <a href={modalData.link} target="_blank" rel="noopener noreferrer">
+                Åpne i Nettbiblioteket
               </a>
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                onClick={() => setShowModal(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+            </Button>
+          ) : null}
+          <Button type="button" variant="secondary" onClick={() => setShowModal(false)}>Lukk</Button>
+        </DialogBlock>
+      </Dialog>
 
-      {/* Trend Concordance Modal */}
-      <div className={`modal fade ${showTrendConcordanceModal ? 'show' : ''}`}
-           style={{ display: showTrendConcordanceModal ? 'block' : 'none' }}
-           tabIndex={-1}
-           role="dialog">
-        <div className="modal-dialog modal-xl" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">
-                {trendConcordanceYear !== null
-                  ? `Konkordanser for ${trendConcordanceRangeLabel || trendConcordanceYear}`
-                  : 'Trend-konkordanser'}
-              </h5>
-              <button
-                type="button"
-                className="btn-close"
-                onClick={() => setShowTrendConcordanceModal(false)}
-                aria-label="Close"
-              ></button>
+      <Dialog
+        className="wide-dialog"
+        open={showTrendConcordanceModal}
+        onClose={() => setShowTrendConcordanceModal(false)}
+        closedby="any"
+      >
+        <DialogBlock>
+          <Heading level={2} data-size="md">
+            {trendConcordanceYear !== null
+              ? `Konkordanser for ${trendConcordanceRangeLabel || trendConcordanceYear}`
+              : 'Trend-konkordanser'}
+          </Heading>
+        </DialogBlock>
+        <DialogBlock>
+          {trendConcordanceStatus ? <Paragraph data-size="sm">{trendConcordanceStatus}</Paragraph> : null}
+          {trendConcordanceError ? (
+            <Alert data-color="danger">Trend-konkordans feilet: {trendConcordanceError}</Alert>
+          ) : trendConcordanceContext && trendConcordanceRows.length > 0 ? (
+            <div className="dialog-results">
+              {buildConcordanceResults(trendConcordanceRows, trendConcordanceContext)}
             </div>
-            <div className="modal-body">
-              {trendConcordanceStatus ? (
-                <div className="small text-muted mb-3">{trendConcordanceStatus}</div>
-              ) : null}
-              {trendConcordanceError ? (
-                <p className="error mb-0">Trend-konkordans feilet: {trendConcordanceError}</p>
-              ) : trendConcordanceContext && trendConcordanceRows.length > 0 ? (
-                buildConcordanceResults(trendConcordanceRows, trendConcordanceContext)
-              ) : (
-                <p className="mb-0">Laster...</p>
-              )}
-            </div>
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowTrendConcordanceModal(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+          ) : (
+            <Paragraph>Laster ...</Paragraph>
+          )}
+        </DialogBlock>
+      </Dialog>
 
-      {/* Filter Modal */}
-      <div className={`modal fade ${showFilterModal ? 'show' : ''}`} 
-           style={{ display: showFilterModal ? 'block' : 'none' }} 
-           tabIndex={-1} 
-           role="dialog">
-        <div className="modal-dialog modal-lg" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">Filter Results</h5>
-              <button 
-                type="button" 
-                className="btn-close" 
-                onClick={() => setShowFilterModal(false)}
-                aria-label="Close"
-              ></button>
-            </div>
-            <div className="modal-body">
-              <div className="mb-4">
-                <label className="form-label">Authors</label>
-                <div className="input-group mb-2">
-                  <input
-                    type="text"
-                    className="form-control"
-                    placeholder="Search authors..."
-                    value={authorSearch}
-                    onChange={handleAuthorSearch}
-                  />
-                </div>
-                {authorSearch && filteredAuthors.length > 0 && (
-                  <div className="list-group mb-2">
-                    {filteredAuthors.map(author => (
-                      <button
-                        key={author}
-                        className="list-group-item list-group-item-action"
-                        onClick={() => handleAuthorSelect(author)}
-                      >
-                        {author}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                {selectedAuthors.length > 0 && (
-                  <div className="d-flex flex-wrap gap-2">
-                    {selectedAuthors.map(author => (
-                      <span key={author} className="badge bg-primary d-flex align-items-center">
-                        {author}
-                        <button
-                          type="button"
-                          className="btn-close btn-close-white ms-2"
-                          onClick={() => handleAuthorRemove(author)}
-                          aria-label="Remove"
-                        ></button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="mb-4">
-                <label className="form-label">Categories</label>
-                <div className="category-filter-list border rounded p-2">
-                  {CATEGORIES.map((category, index) => {
-                    const checked = selectedCategories.includes(category);
-                    const categoryId = `category-filter-${index}`;
-                    return (
-                      <div className="form-check mb-2" key={category}>
-                        <input
-                          className="form-check-input"
-                          type="checkbox"
-                          id={categoryId}
-                          checked={checked}
-                          onChange={() => handleCategoryToggle(category)}
-                        />
-                        <label className="form-check-label" htmlFor={categoryId}>
-                          {category}
-                        </label>
-                      </div>
-                    );
-                  })}
-                </div>
-                <small className="text-muted d-block mt-1">
-                  Trykk for å velge en eller flere kategorier.
-                </small>
-              </div>
-
-              <div className="mb-4">
-                <label className="form-label">Year Range: {yearRange[0]} - {yearRange[1]}</label>
-                <div className="d-flex gap-3">
-                  <div className="flex-grow-1">
-                    <label className="form-label">From</label>
-                    <input
-                      type="range"
-                      className="form-range"
-                      min={MIN_YEAR}
-                      max={MAX_YEAR}
-                      value={yearRange[0]}
-                      name="minYear"
-                      onChange={handleYearRangeChange}
-                    />
-                  </div>
-                  <div className="flex-grow-1">
-                    <label className="form-label">To</label>
-                    <input
-                      type="range"
-                      className="form-range"
-                      min={MIN_YEAR}
-                      max={MAX_YEAR}
-                      value={yearRange[1]}
-                      name="maxYear"
-                      onChange={handleYearRangeChange}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button 
-                type="button" 
-                className="btn btn-secondary" 
-                onClick={() => setShowFilterModal(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Search Params Modal */}
-      <div className={`modal fade ${showSearchParamsModal ? 'show' : ''}`}
-           style={{ display: showSearchParamsModal ? 'block' : 'none' }}
-           tabIndex={-1}
-           role="dialog">
-        <div className="modal-dialog" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">Søkeparametre</h5>
-              <button
-                type="button"
-                className="btn-close"
-                onClick={() => setShowSearchParamsModal(false)}
-                aria-label="Close"
-              ></button>
-            </div>
-            <div className="modal-body">
-              <div className="row g-3">
-                <div className="col-md-6">
-                  <label className="form-label">Nærhetsvindu (window)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={1}
-                    step={1}
-                    value={nearWindow}
-                    onChange={(e) => setNearWindow(Number(e.target.value))}
-                  />
-                  <small className="text-muted">Maks avstand mellom søkegrupper i treff.</small>
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Kontekst før (before)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={0}
-                    step={1}
-                    value={beforeWindow}
-                    onChange={(e) => setBeforeWindow(Number(e.target.value))}
-                  />
-                  <small className="text-muted">Antall ord (tokens) vist før treffet i utdraget.</small>
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Kontekst etter (after)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={0}
-                    step={1}
-                    value={afterWindow}
-                    onChange={(e) => setAfterWindow(Number(e.target.value))}
-                  />
-                  <small className="text-muted">Antall ord (tokens) vist etter treffet i utdraget.</small>
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Samples per book</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={1}
-                    step={1}
-                    value={perBook}
-                    onChange={(e) => setPerBook(Number(e.target.value))}
-                  />
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">doc_samples (fallback)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={0}
-                    step={1}
-                    value={docSamples}
-                    onChange={(e) => setDocSamples(Number(e.target.value))}
-                  />
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Maks visning (cutoff)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={1}
-                    step={1}
-                    value={totalLimit}
-                    onChange={(e) => setTotalLimit(Number(e.target.value))}
-                  />
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label">Max variants (*)</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    min={1}
-                    step={1}
-                    value={maxVariants}
-                    onChange={(e) => setMaxVariants(Number(e.target.value))}
-                  />
-                </div>
-                <div className="col-12">
-                  <label className="form-label">Term groups JSON (optional)</label>
-                  <textarea
-                    className="form-control"
-                    rows={2}
-                    placeholder='[["spise","spiser","spiste"],["middag"]] or [spise, spiste] middag'
-                    value={termGroupsInput}
-                    onChange={(e) => setTermGroupsInput(e.target.value)}
-                  />
-                </div>
-                <div className="col-12">
-                  <div className="form-check">
-                    <input
-                      className="form-check-input"
-                      type="checkbox"
-                      id="symmetricSearchCheck"
-                      checked={isSymmetric}
-                      onChange={(e) => setIsSymmetric(e.target.checked)}
-                    />
-                    <label className="form-check-label" htmlFor="symmetricSearchCheck">
-                      Symmetric search window
-                    </label>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowSearchParamsModal(false)}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Help Modal */}
-      <div className={`modal fade ${showHelpModal ? 'show' : ''}`}
-           style={{ display: showHelpModal ? 'block' : 'none' }}
-           tabIndex={-1}
-           role="dialog">
-        <div className="modal-dialog" role="document">
-          <div className="modal-content">
-            <div className="modal-header">
-              <h5 className="modal-title">Søkehjelp</h5>
-              <button
-                type="button"
-                className="btn-close"
-                onClick={() => setShowHelpModal(false)}
-                aria-label="Close"
-              ></button>
-            </div>
-            <div className="modal-body">
-              <div className="alert alert-info py-2 mb-3">
-                Skriv i søkefeltet og velg mellom <code>Konk</code>, <code>Tell</code> og <code>Trend</code> i knapperaden.
-              </div>
-              <div className="alert alert-light border py-2 mb-3">
-                <strong>Hva kan jeg søke etter?</strong><br />
-                <code>norge</code>, <code>norge sverige</code>, <code>"norge i krig"</code>, <code>elskov*</code>, <code>[elskov, kjærlighed] kvinne</code>, <code>#geo</code>, <code>#geo krig</code>, <code>#geo:"Rio de Janeiro"</code>, <code>#geo:1032414</code>.
-              </div>
-              <p><strong>Vanlig søk:</strong> skriv ett eller flere ord, for eksempel <code>elskov kjærlighed</code>. Flere ord uten anførselstegn blir behandlet som nærhetssøk.</p>
-              <p><strong>Frasesøk:</strong> skriv uttrykket i anførselstegn, for eksempel <code>"i dag"</code> eller <code>"norge i krig"</code>. Da brukes <code>sequence</code> med eksakt rekkefølge.</p>
-              <p><strong>Wildcard:</strong> bruk <code>*</code>, for eksempel <code>elskov*</code>.</p>
-              <p><strong>Termgrupper:</strong> skriv grupper i søkefeltet, for eksempel <code>[spise, spiser] middag</code> eller <code>[krig, krigen] [skip, sjø]</code>. OR brukes inni gruppen, og AND mellom grupper.</p>
-              <p><strong>Geo-søk:</strong> bruk <code>#geo</code> for alle stedstreff, <code>#geo krig</code> for geo + ord, <code>#geo:"Rio de Janeiro"</code> for navneoppslag via resolver, eller en NB-steds-id som <code>#geo:1032414</code>. Ved behov prøver appen også <code>#geo:nb:1032414</code>.</p>
-              <p><strong>Resultatmodus:</strong> <code>Konk</code> viser konkordanser som kan klikkes for bokinfo og lenke til Nettbiblioteket. <code>Tell</code> sender vanlige søk til <code>near_query</code> med <code>mode=count</code>. <code>Trend</code> bruker samme løype med <code>mode=year-count</code> og tegner en årsserie fra <code>rows[].year</code> mot <code>rows[].total</code>.</p>
-              <p><strong>Filtrering:</strong> bruk verktøy-ikonet for forfatter, kategori og år. Laster du opp et korpus, brukes det som dokumentfilter.</p>
-              <p><strong>Søkeparametre:</strong> <code>window</code> er maks avstand mellom søkegrupper i trefflogikken. <code>before / after</code> er hvor mye kontekst som vises i utdraget.</p>
-              <p><strong>Treffmengde:</strong> bruk <code>Samples per book</code>, <code>doc_samples</code> og <code>Maks visning</code> i verktøymenyen for å styre hvor mange treff Konk viser.</p>
-              <p><strong>Store søk:</strong> Konk følger treffutvalget fra verktøymenyen, mens Tell og Trend kan gå bredere.</p>
-            </div>
-            <div className="modal-footer">
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setShowHelpModal(false)}
-              >
-                Lukk
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {showModal && <div className="modal-backdrop fade show"></div>}
-      {showTrendConcordanceModal && <div className="modal-backdrop fade show"></div>}
-      {showFilterModal && <div className="modal-backdrop fade show"></div>}
-      {showSearchParamsModal && <div className="modal-backdrop fade show"></div>}
-      {showHelpModal && <div className="modal-backdrop fade show"></div>}
-    </div>
+    </>
   );
 }
 
