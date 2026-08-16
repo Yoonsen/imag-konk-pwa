@@ -4,6 +4,7 @@ import {
   PREVIEW_PROFILES,
   buildCountRequest,
   buildFullExportRequest,
+  comparisonTermsForMode,
   isExportWithinLimit,
   isObviouslyBroadExportQuery,
   matchingPreviewProfile,
@@ -24,6 +25,20 @@ const baseContext = {
 };
 
 describe('search request profiles', () => {
+  it('uses one inline OR group as separate aggregate comparison terms', () => {
+    expect(comparisonTermsForMode([['spise', 'sove']], 'count')).toEqual(['spise', 'sove']);
+    expect(comparisonTermsForMode([['spise', 'sove']], 'year-count')).toEqual(['spise', 'sove']);
+    expect(comparisonTermsForMode([['spise', 'sove']], 'render')).toBeNull();
+    expect(comparisonTermsForMode([['spise'], ['sove']], 'count')).toEqual(['spise']);
+    expect(comparisonTermsForMode([['i', 'paa'], ['morgen', 'kveld']], 'year-count'))
+      .toEqual(['i', 'paa']);
+  });
+
+  it('removes duplicate and empty comparison terms', () => {
+    expect(comparisonTermsForMode([['spise', ' ', 'spise', 'sove']], 'count'))
+      .toEqual(['spise', 'sove']);
+  });
+
   it('defines the balanced profile from the default preview values', () => {
     expect(PREVIEW_PROFILES.find((profile) => profile.id === 'balanced')).toMatchObject({
       perBook: 3,

@@ -18,8 +18,10 @@ import { SearchPanel, SearchSettingsPanel } from './components/SearchPanel';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import {
   FULL_EXPORT_LIMIT,
+  MAX_COMPARISON_TERMS,
   buildCountRequest,
   buildFullExportRequest,
+  comparisonTermsForMode,
   isExportWithinLimit,
   isObviouslyBroadExportQuery,
   normalizeSearchParameters,
@@ -85,6 +87,16 @@ interface YearCountRow {
 
 interface YearCountResponse {
   rows?: YearCountRow[];
+}
+
+interface TrendComparisonSeries {
+  term: string;
+  rows: YearCountRow[];
+}
+
+interface TrendComparisonHover {
+  term: string;
+  row: YearCountRow;
 }
 
 interface PlaceResolverMatch {
@@ -322,6 +334,183 @@ function buildYearCountResults(
   );
 }
 
+function buildComparisonYearCountResults(
+  comparisonSeries: TrendComparisonSeries[],
+  activePoint: TrendComparisonHover | null,
+  onPointHover: (term: string, row: YearCountRow) => void,
+  onYearSelect: (term: string, year: number, span: 'exact' | 'window5') => void,
+  limitationNotice?: string
+): React.ReactNode {
+  const colors = ['#1f6663', '#a34f2a', '#385f9d', '#8a5a91', '#847018', '#3d7a45', '#a33d62', '#59636b'];
+  const normalizedSeries = comparisonSeries.map((series, index) => ({
+    ...series,
+    color: colors[index % colors.length],
+    rows: series.rows
+      .filter((row) => Number.isFinite(row.year))
+      .map((row) => ({
+        year: Math.trunc(row.year),
+        total: typeof row.total === 'number' ? row.total : 0,
+        docs: typeof row.docs === 'number' ? row.docs : 0,
+        filterDocs: typeof row.filterDocs === 'number' ? row.filterDocs : 0
+      }))
+      .sort((a, b) => a.year - b.year)
+  }));
+  const allRows = normalizedSeries.flatMap((series) => series.rows);
+
+  if (allRows.length === 0) {
+    return <p key="no-comparison-year-results">Ingen årlige tellinger funnet.</p>;
+  }
+
+  const width = 720;
+  const height = 260;
+  const padding = { top: 16, right: 16, bottom: 32, left: 48 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const minYear = Math.min(...allRows.map((row) => row.year));
+  const maxYear = Math.max(...allRows.map((row) => row.year));
+  const maxTotal = Math.max(...allRows.map((row) => row.total), 1);
+  const xForYear = (year: number) => minYear === maxYear
+    ? padding.left + plotWidth / 2
+    : padding.left + ((year - minYear) / (maxYear - minYear)) * plotWidth;
+  const yForTotal = (total: number) => padding.top + plotHeight - (total / maxTotal) * plotHeight;
+  const axisYears = Array.from(new Set([minYear, Math.round((minYear + maxYear) / 2), maxYear]));
+
+  return (
+    <div className="year-count-results">
+      <div className="year-count-summary">
+        {normalizedSeries.map((series) => {
+          const total = series.rows.reduce((sum, row) => sum + row.total, 0);
+          const peak = series.rows.reduce<typeof series.rows[number] | null>(
+            (current, row) => !current || row.total > current.total ? row : current,
+            null
+          );
+          return (
+            <div className="year-count-card" key={`summary-${series.term}`}>
+              <strong>{series.term}</strong>
+              <span>{numberFormatter.format(total)} treff</span>
+              {peak ? <small>Topp {peak.year}: {numberFormatter.format(peak.total)}</small> : null}
+            </div>
+          );
+        })}
+      </div>
+
+      {limitationNotice ? (
+        <div className="year-count-note"><strong>Merk:</strong> {limitationNotice}</div>
+      ) : null}
+
+      <div className="year-count-legend" aria-label="Trendlinjer">
+        {normalizedSeries.map((series) => (
+          <span key={`legend-${series.term}`}>
+            <i style={{ backgroundColor: series.color }} aria-hidden="true" />
+            {series.term}
+          </span>
+        ))}
+      </div>
+
+      <div className="year-count-chart">
+        <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Sammenlignede årlige tellinger">
+          <line
+            x1={padding.left}
+            y1={padding.top + plotHeight}
+            x2={padding.left + plotWidth}
+            y2={padding.top + plotHeight}
+            stroke="#adb5bd"
+            strokeWidth="1"
+          />
+          <line
+            x1={padding.left}
+            y1={padding.top}
+            x2={padding.left}
+            y2={padding.top + plotHeight}
+            stroke="#adb5bd"
+            strokeWidth="1"
+          />
+          <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" fontSize="12" fill="#6c757d">
+            {numberFormatter.format(maxTotal)}
+          </text>
+          <text x={padding.left - 8} y={padding.top + plotHeight + 4} textAnchor="end" fontSize="12" fill="#6c757d">
+            0
+          </text>
+          {normalizedSeries.map((series) => {
+            const points = series.rows.map((row) => ({
+              ...row,
+              x: xForYear(row.year),
+              y: yForTotal(row.total)
+            }));
+            return (
+              <g key={`series-${series.term}`}>
+                <polyline
+                  fill="none"
+                  stroke={series.color}
+                  strokeWidth="2.5"
+                  points={points.map((point) => `${point.x},${point.y}`).join(' ')}
+                />
+                {points.map((point) => (
+                  <circle
+                    key={`${series.term}-${point.year}`}
+                    cx={point.x}
+                    cy={point.y}
+                    r="3.5"
+                    fill={series.color}
+                    tabIndex={0}
+                    style={{ cursor: 'pointer' }}
+                    onMouseEnter={() => onPointHover(series.term, point)}
+                    onFocus={() => onPointHover(series.term, point)}
+                  >
+                    <title>{series.term}, {point.year}: {numberFormatter.format(point.total)} treff</title>
+                  </circle>
+                ))}
+              </g>
+            );
+          })}
+          {axisYears.map((year) => (
+            <text
+              key={`comparison-axis-${year}`}
+              x={xForYear(year)}
+              y={height - 8}
+              textAnchor="middle"
+              fontSize="12"
+              fill="#6c757d"
+            >
+              {year}
+            </text>
+          ))}
+        </svg>
+      </div>
+
+      {activePoint ? (
+        <div className="year-count-action">
+          <div>
+            <strong>{activePoint.term}</strong>, {activePoint.row.year}: {numberFormatter.format(activePoint.row.total ?? 0)} treff
+          </div>
+          <div className="year-count-action-buttons">
+            <Button
+              type="button"
+              data-size="sm"
+              variant="secondary"
+              onClick={() => onYearSelect(activePoint.term, activePoint.row.year, 'exact')}
+            >
+              Dette året
+            </Button>
+            <Button
+              type="button"
+              data-size="sm"
+              variant="tertiary"
+              onClick={() => onYearSelect(activePoint.term, activePoint.row.year, 'window5')}
+            >
+              +/- 5 år
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="year-count-note">
+        Linjene bruker samme skala. Velg et punkt for å åpne konkordanser for ordet og året.
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
   const [uniqueAuthors, setUniqueAuthors] = useState<string[]>([]);
@@ -351,6 +540,9 @@ function App() {
   const [trendRows, setTrendRows] = useState<YearCountRow[] | null>(null);
   const [trendQuery, setTrendQuery] = useState<string>('');
   const [trendHoverRow, setTrendHoverRow] = useState<YearCountRow | null>(null);
+  const [trendComparisonSeries, setTrendComparisonSeries] = useState<TrendComparisonSeries[] | null>(null);
+  const [trendComparisonHover, setTrendComparisonHover] = useState<TrendComparisonHover | null>(null);
+  const [trendComparisonNotice, setTrendComparisonNotice] = useState('');
   const [showTrendConcordanceModal, setShowTrendConcordanceModal] = useState(false);
   const [trendConcordanceYear, setTrendConcordanceYear] = useState<number | null>(null);
   const [trendConcordanceRangeLabel, setTrendConcordanceRangeLabel] = useState<string>('');
@@ -803,6 +995,9 @@ function App() {
     setTrendRows(null);
     setTrendQuery('');
     setTrendHoverRow(null);
+    setTrendComparisonSeries(null);
+    setTrendComparisonHover(null);
+    setTrendComparisonNotice('');
 
     try {
       const geoResolverInput = parseResolvableGeoInput(trimmedQuery);
@@ -923,9 +1118,21 @@ function App() {
       }
 
       const effectiveTermGroups = (geoQuery.terms || geoQuery.termGroups) ? null : (parsedTermGroups ?? autoTermGroups);
+      const comparisonTerms = !geoQuery.terms && !geoQuery.termGroups
+        ? comparisonTermsForMode(parsedTermGroups, activeResultMode)
+        : null;
+      const comparisonLimitationNotice = comparisonTerms && parsedTermGroups && parsedTermGroups.length > 1
+        ? `Bare den første gruppen sammenlignes nå. ${parsedTermGroups.length - 1} nærhetsgruppe${parsedTermGroups.length > 2 ? 'r' : ''} er utelatt.`
+        : '';
 
       if (!effectiveTermGroups && !geoQuery.terms && !geoQuery.termGroups) {
         alert("Please enter a search term");
+        return;
+      }
+
+      if (comparisonTerms && comparisonTerms.length > MAX_COMPARISON_TERMS) {
+        setStatus(`Du kan sammenligne opptil ${MAX_COMPARISON_TERMS} ord om gangen.`);
+        setResults(<p key="too-many-comparison-terms">Reduser antall ord i hakeparentesen.</p>);
         return;
       }
 
@@ -1098,6 +1305,120 @@ function App() {
       let activeRequestBody: typeof requestBody = requestBody;
       let activeGeoToken = geoQuery.terms?.[0] ?? null;
       let geoFallbackApplied = false;
+
+      if (comparisonTerms && endpointPath === 'near_query') {
+        const comparisonResponses = await Promise.all(comparisonTerms.map(async (term) => {
+          const response = await runSearchRequest({
+            ...requestBody,
+            termGroups: [[term]]
+          });
+          if (!response.ok && response.status !== 404) {
+            throw new Error(`HTTP error ${response.status} for "${term}": ${await response.text()}`);
+          }
+          return { term, response };
+        }));
+        const comparisonElapsedMs = Math.round(
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
+        );
+
+        if (activeResultMode === 'year-count') {
+          const series = await Promise.all(comparisonResponses.map(async ({ term, response }) => {
+            const payload: YearCountResponse = response.status === 404 ? {} : await response.json();
+            return {
+              term,
+              rows: Array.isArray(payload.rows) ? [...payload.rows].sort((a, b) => a.year - b.year) : []
+            };
+          }));
+          const total = series.reduce(
+            (seriesSum, item) => seriesSum + item.rows.reduce(
+              (rowSum, row) => rowSum + (typeof row.total === 'number' ? row.total : 0),
+              0
+            ),
+            0
+          );
+          const firstSeriesWithHits = series.find((item) => item.rows.some((row) => (row.total ?? 0) > 0)) ?? series[0];
+          const initialRow = firstSeriesWithHits?.rows.find((row) => (row.total ?? 0) > 0)
+            ?? firstSeriesWithHits?.rows[0]
+            ?? null;
+
+          setEstimatedExportTotal(total);
+          setStatus(
+            `Sammenligner ${comparisonTerms.length} ord over tid: ${numberFormatter.format(total)} treff totalt ` +
+            `(${comparisonElapsedMs} ms)` +
+            (comparisonLimitationNotice ? ` ${comparisonLimitationNotice}` : '')
+          );
+          setLastConcordanceRows([]);
+          setLastRenderContext(null);
+          setTrendRows(null);
+          setTrendQuery(trimmedQuery);
+          setTrendComparisonSeries(series);
+          setTrendComparisonHover(firstSeriesWithHits && initialRow
+            ? { term: firstSeriesWithHits.term, row: initialRow }
+            : null);
+          setTrendComparisonNotice(comparisonLimitationNotice);
+          setResults(null);
+          setDebugInfo({
+            endpoint: endpointPath,
+            queryMode: 'comparison-year-count',
+            resultMode: activeResultMode,
+            comparisonTerms,
+            series: series.map((item) => ({ term: item.term, years: item.rows.length })),
+            total,
+            responseMs: comparisonElapsedMs,
+            filteredDocs: filteredMetadata.length,
+            useFilter,
+            filterIdsCount: useFilter ? effectiveFilterIds.length : 0
+          });
+          return;
+        }
+
+        const counts = await Promise.all(comparisonResponses.map(async ({ term, response }) => {
+          const payload: CountResponse = response.status === 404 ? {} : await response.json();
+          return {
+            term,
+            total: typeof payload.total === 'number' ? payload.total : 0,
+            docs: typeof payload.docs === 'number' ? payload.docs : 0
+          };
+        }));
+        const total = counts.reduce((sum, item) => sum + item.total, 0);
+        setEstimatedExportTotal(total);
+        setStatus(
+          `Telte ${comparisonTerms.length} ord separat: ${numberFormatter.format(total)} treff totalt ` +
+          `(${comparisonElapsedMs} ms)` +
+          (comparisonLimitationNotice ? ` ${comparisonLimitationNotice}` : '')
+        );
+        setLastConcordanceRows([]);
+        setLastRenderContext(null);
+        setResults(
+          <>
+            {comparisonLimitationNotice
+              ? <p className="result-explanation"><strong>Merk:</strong> {comparisonLimitationNotice}</p>
+              : null}
+            <div className="comparison-count-grid">
+              {counts.map((item) => (
+                <div className="year-count-card" key={`count-${item.term}`}>
+                  <strong>{item.term}</strong>
+                  <span>{numberFormatter.format(item.total)} treff</span>
+                  <small>{numberFormatter.format(item.docs)} dokumenter</small>
+                </div>
+              ))}
+            </div>
+          </>
+        );
+        setDebugInfo({
+          endpoint: endpointPath,
+          queryMode: 'comparison-count',
+          resultMode: activeResultMode,
+          comparisonTerms,
+          counts,
+          total,
+          responseMs: comparisonElapsedMs,
+          filteredDocs: filteredMetadata.length,
+          useFilter,
+          filterIdsCount: useFilter ? effectiveFilterIds.length : 0
+        });
+        return;
+      }
 
       let concResp = await runSearchRequest(activeRequestBody);
       if (!concResp.ok && concResp.status === 404 && fallbackGeoToken && activeGeoToken !== fallbackGeoToken) {
@@ -2129,6 +2450,14 @@ function App() {
                 </Paragraph>
                 {buildConcordanceResults(lastConcordanceRows, lastRenderContext)}
               </>
+            ) : trendComparisonSeries && trendComparisonSeries.length > 0 ? (
+              buildComparisonYearCountResults(
+                trendComparisonSeries,
+                trendComparisonHover,
+                (term, row) => setTrendComparisonHover({ term, row }),
+                (term, year, span) => { void openTrendConcordancesForYear(year, term, span); },
+                trendComparisonNotice
+              )
             ) : trendRows && trendRows.length > 0 ? (
               buildYearCountResults(
                 trendRows,

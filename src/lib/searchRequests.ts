@@ -1,4 +1,5 @@
 export const FULL_EXPORT_LIMIT = 5000;
+export const MAX_COMPARISON_TERMS = 8;
 export type ResultMode = 'render' | 'count' | 'year-count';
 export type PreviewProfileId = 'quick' | 'balanced' | 'larger';
 
@@ -48,6 +49,23 @@ export function matchingPreviewProfile(
     profile.docSamples === docSamples &&
     profile.totalLimit === totalLimit
   )?.id ?? null;
+}
+
+export function comparisonTermsForMode(
+  termGroups: string[][] | null,
+  resultMode: ResultMode
+): string[] | null {
+  if (resultMode === 'render' || !termGroups?.length) {
+    return null;
+  }
+
+  const uniqueTerms = Array.from(new Set(
+    termGroups[0].map((term) => term.trim()).filter(Boolean)
+  ));
+  if (termGroups.length > 1) {
+    return uniqueTerms.length > 0 ? uniqueTerms : null;
+  }
+  return uniqueTerms.length >= 2 ? uniqueTerms : null;
 }
 
 export interface SearchParameterInput {
