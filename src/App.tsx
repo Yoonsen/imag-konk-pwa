@@ -1967,9 +1967,14 @@ function App() {
 
   const activeCorpus = buildFilterSelection(yearRange, false);
   const sourceLabel = persistentFilterIds ? 'Opplastet subkorpus' : 'ImagiNation-korpuset';
+  const parameterModeLabel = resultMode === 'render'
+    ? 'Konk'
+    : resultMode === 'count'
+      ? 'telling'
+      : 'trend';
   const panelTitles: Record<WorkspacePanelId, string> = {
     corpus: 'Subkorpus',
-    parameters: 'Parametre',
+    parameters: `Parametre for ${parameterModeLabel}`,
     export: 'Eksport',
     help: 'Hjelp'
   };
