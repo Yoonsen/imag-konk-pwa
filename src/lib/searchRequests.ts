@@ -222,3 +222,40 @@ export function buildFullExportRequest(context: ConcordanceRequestContext): Prep
     }
   };
 }
+
+export interface CorpusTokenStatsRequest {
+  filterIds: number[];
+  useFilter: boolean;
+}
+
+export interface CorpusTokenYearRow {
+  year: number;
+  nTokens: number;
+}
+
+export interface CorpusTokenStatsResponse {
+  corpusHash: string;
+  useFilter: boolean;
+  requestedBookCount: number;
+  bookCount: number;
+  booksWithTokens: number;
+  totalTokens: number;
+  tokensWithoutYear: number;
+  tokensByYear: Record<string, number>;
+  rows: CorpusTokenYearRow[];
+  cached: boolean;
+  source: string;
+}
+
+export function buildCorpusTokenStatsRequest(context: {
+  useFilter: boolean;
+  filterIds: number[];
+}): { endpoint: 'api/corpus/token-stats'; body: CorpusTokenStatsRequest } {
+  return {
+    endpoint: 'api/corpus/token-stats',
+    body: {
+      useFilter: context.useFilter,
+      filterIds: context.useFilter ? context.filterIds : []
+    }
+  };
+}

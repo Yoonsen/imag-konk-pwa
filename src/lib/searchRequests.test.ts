@@ -3,6 +3,7 @@ import {
   FULL_EXPORT_LIMIT,
   PREVIEW_PROFILES,
   buildCountRequest,
+  buildCorpusTokenStatsRequest,
   buildFullExportRequest,
   comparisonTermsForMode,
   isExportWithinLimit,
@@ -103,5 +104,24 @@ describe('search request profiles', () => {
     expect(isObviouslyBroadExportQuery('.')).toBe(true);
     expect(isObviouslyBroadExportQuery('*')).toBe(true);
     expect(isObviouslyBroadExportQuery('demokrati')).toBe(false);
+  });
+
+  it('asks the backend for exact token totals of the active filterIds set', () => {
+    const filtered = buildCorpusTokenStatsRequest({
+      useFilter: true,
+      filterIds: [11, 22]
+    });
+    const wholeCorpus = buildCorpusTokenStatsRequest({
+      useFilter: false,
+      filterIds: [11, 22]
+    });
+    expect(filtered).toEqual({
+      endpoint: 'api/corpus/token-stats',
+      body: { useFilter: true, filterIds: [11, 22] }
+    });
+    expect(wholeCorpus).toEqual({
+      endpoint: 'api/corpus/token-stats',
+      body: { useFilter: false, filterIds: [] }
+    });
   });
 });

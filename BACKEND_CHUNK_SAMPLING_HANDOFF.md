@@ -1,7 +1,9 @@
 # Backend-handoff: Roaring, chunks og adaptiv sampling
 
 Dette notatet samler ideene som skal vurderes når arbeidet fortsetter i
-backend-repositoriet. Det beskriver en prototype, ikke en låst kontrakt.
+backend-repositoriet. Det meste beskriver en prototype, ikke en låst kontrakt.
+Unntak: `POST /api/corpus/token-stats` under Tokenmengde er en live payload
+frontend kan bygge mot.
 
 ## Dagens mentale modell
 
@@ -135,9 +137,9 @@ inklusjonssannsynligheter.
 
 ## Tokenmengde og trendmoduser
 
-Kontroller om eksakt `token_count` allerede finnes per dokument. Historikken
-antyder at sekvenslengde eller bok-token-count kan være tilgjengelig. Hvis
-feltet finnes, summeres det per år og aktivt subkorpus og brukes som nevner.
+Eksakt tokenmengde per dokument kommer fra sidecar `token_blocks`
+(`SUM(block_len)`), ikke fra `corpus` i `imagination.db`. Backend materialiserer
+`(dhlabid, n_tokens, year)` én gang og summerer per år for aktivt subkorpus.
 
 Planlagte trendvisninger:
 
@@ -148,8 +150,77 @@ Planlagte trendvisninger:
 
 År med kohortsum null skal være manglende data, ikke null prosent.
 
-Proxyen med høyfrekvente referansetoken kan beholdes som kontroll/fallback,
-men eksakt token-count er å foretrekke dersom den er like billig å hente.
+Proxyen med høyfrekvente referansetoken (se `RELATIVE_FREQUENCY_PROXY.md`) kan
+beholdes som kontroll/fallback. Eksakt token-count er nevneren som skal brukes
+når payloaden under er tilgjengelig.
+
+### Live payload: `POST /api/corpus/token-stats`
+
+Kall dette når `effectiveFilterIds` endres, ikke per Trend-søk. Korpuset i
+Konk er bare `filterIds`; backend hasher den sorterte id-listen og cacher
+årssummene.
+
+Request bruker samme filterkontrakt som `/near_query`:
+
+```json
+{
+  "useFilter": true,
+  "filterIds": [100011001, 100011002]
+}
+```
+
+- `useFilter: false` ignorerer `filterIds` og summerer hele shard-korpuset.
+  `corpusHash` blir da `"all"`.
+- `useFilter: true` med tom `filterIds` gir nullstillte totaler, ikke hele
+  korpuset.
+- `useFilter: true` med id-liste summerer bare bøker som finnes i
+  token-cachen. `requestedBookCount` er antall unike id-er i requesten;
+  `bookCount` er hvor mange av dem som faktisk hadde tokenmengde.
+
+TypeScript-hjelper: `buildCorpusTokenStatsRequest` i
+`src/lib/searchRequests.ts`.
+
+Svar:
+
+```json
+{
+  "corpusHash": "a1b2c3…",
+  "useFilter": true,
+  "requestedBookCount": 1940,
+  "bookCount": 1940,
+  "booksWithTokens": 1940,
+  "totalTokens": 123456789,
+  "tokensWithoutYear": 0,
+  "tokensByYear": {
+    "1881": 27542825,
+    "1882": 22852396
+  },
+  "rows": [
+    { "year": 1881, "nTokens": 27542825 },
+    { "year": 1882, "nTokens": 22852396 }
+  ],
+  "cached": true,
+  "source": "token_blocks"
+}
+```
+
+Felt:
+
+- `corpusHash`: `"all"` eller sha256 av sorterte unique int64-`filterIds`.
+  Stabil nøkkel for frontend-cache.
+- `totalTokens`: nevner for relativ frekvens over hele det aktive utvalget.
+- `tokensByYear` / `rows`: nevner per år. Bruk `rows[i].nTokens` mot
+  Trend-radens `total` for samme år:
+  `rel_freq(year) = hits(year) / nTokens(year)`.
+- `tokensWithoutYear`: token i shard-bøker uten `year` i `corpus`. Ta dem
+  med i `totalTokens`, men ikke i årsserien.
+- `source`: alltid `"token_blocks"` i denne versjonen.
+- `cached`: om subsett-aggregatet allerede lå i backend-cachen.
+
+Lokalt uten VPN: kontrakten og typene er nok til å bygge relativ/kohort-UI
+mot mock eller senere live API. Endepunktet lander på
+`https://api.nb.no/dhlab/imag/api/corpus/token-stats` først etter backend-deploy.
+Før det: 404. Ikke blokker Trend-absolutt på manglende payload.
 
 ## Komplekse termgrupper
 
