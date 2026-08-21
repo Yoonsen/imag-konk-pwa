@@ -20,11 +20,13 @@ import {
   FULL_EXPORT_LIMIT,
   MAX_COMPARISON_TERMS,
   buildCountRequest,
+  buildCorpusTokenStatsRequest,
   buildFullExportRequest,
   comparisonTermsForMode,
   isExportWithinLimit,
   isObviouslyBroadExportQuery,
   normalizeSearchParameters,
+  type CorpusTokenStatsResponse,
   type ResultMode
 } from './lib/searchRequests';
 import {
@@ -32,6 +34,15 @@ import {
   safeFilenamePart,
   type ConcordanceExportRow
 } from './lib/csvExport';
+import {
+  formatTrendValue,
+  scaleComparisonTrendSeries,
+  scaleSingleTrendRows,
+  smoothComparisonTrendSeries,
+  smoothSingleTrendRows,
+  type TrendScaleMode,
+  type TrendSmoothingMode
+} from './lib/trendScaling';
 
 interface Metadata {
   id: number;
@@ -169,9 +180,13 @@ const numberFormatter = new Intl.NumberFormat('nb-NO');
 
 function buildYearCountResults(
   yearRows: YearCountRow[],
+  lineYearRows: YearCountRow[],
   onYearSelect?: (year: number, span: 'exact' | 'window5') => void,
   activeYear?: YearCountRow | null,
-  onYearHover?: (row: YearCountRow) => void
+  onPointActivate?: (row: YearCountRow) => void,
+  onPointDismiss?: () => void,
+  scaleMode: TrendScaleMode = 'absolute',
+  smoothingMode: TrendSmoothingMode = 'annual'
 ): React.ReactNode {
   const rows = yearRows
     .filter((row) => Number.isFinite(row.year))
@@ -182,12 +197,20 @@ function buildYearCountResults(
       filterDocs: typeof row.filterDocs === 'number' ? row.filterDocs : 0
     }))
     .sort((a, b) => a.year - b.year);
+  const lineRows = lineYearRows
+    .filter((row) => Number.isFinite(row.year))
+    .map((row) => ({
+      year: Math.trunc(row.year),
+      total: typeof row.total === 'number' ? row.total : 0
+    }))
+    .sort((a, b) => a.year - b.year);
 
   if (rows.length === 0) {
     return <p key="no-year-results">No yearly counts found for this query.</p>;
   }
 
   const totalMatches = rows.reduce((sum, row) => sum + row.total, 0);
+  const summaryValue = scaleMode === 'absolute' ? totalMatches : totalMatches / rows.length;
   const peakRow = rows.reduce((peak, row) => (row.total > peak.total ? row : peak), rows[0]);
   const yearsWithHits = rows.filter((row) => row.total > 0).length;
   const minYear = rows[0].year;
@@ -197,7 +220,11 @@ function buildYearCountResults(
   const padding = { top: 16, right: 16, bottom: 32, left: 48 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const maxTotal = Math.max(...rows.map((row) => row.total), 1);
+  const maxTotal = Math.max(
+    ...rows.map((row) => row.total),
+    ...lineRows.map((row) => row.total),
+    1
+  );
   const points = rows.map((row) => {
     const x = rows.length === 1 || minYear === maxYear
       ? padding.left + plotWidth / 2
@@ -205,7 +232,14 @@ function buildYearCountResults(
     const y = padding.top + plotHeight - (row.total / maxTotal) * plotHeight;
     return { ...row, x, y };
   });
-  const polylinePoints = points.map((point) => `${point.x},${point.y}`).join(' ');
+  const linePoints = lineRows.map((row) => {
+    const x = minYear === maxYear
+      ? padding.left + plotWidth / 2
+      : padding.left + ((row.year - minYear) / (maxYear - minYear)) * plotWidth;
+    const y = padding.top + plotHeight - (row.total / maxTotal) * plotHeight;
+    return { ...row, x, y };
+  });
+  const polylinePoints = linePoints.map((point) => `${point.x},${point.y}`).join(' ');
   const axisLabelIndexes = Array.from(new Set([
     0,
     Math.floor((rows.length - 1) / 2),
@@ -214,21 +248,6 @@ function buildYearCountResults(
 
   return (
     <div className="year-count-results">
-      <div className="year-count-summary">
-        <div className="year-count-card">
-          <strong>Total treff</strong>
-          <span>{numberFormatter.format(totalMatches)}</span>
-        </div>
-        <div className="year-count-card">
-          <strong>År med flest treff</strong>
-          <span>{peakRow.year}: {numberFormatter.format(peakRow.total)}</span>
-        </div>
-        <div className="year-count-card">
-          <strong>År med treff</strong>
-          <span>{numberFormatter.format(yearsWithHits)}</span>
-        </div>
-      </div>
-
       <div className="year-count-chart">
         <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Årlig telling">
           <line
@@ -248,7 +267,7 @@ function buildYearCountResults(
             strokeWidth="1"
           />
           <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" fontSize="12" fill="#6c757d">
-            {numberFormatter.format(maxTotal)}
+            {formatTrendValue(maxTotal, scaleMode)}
           </text>
           <text x={padding.left - 8} y={padding.top + plotHeight + 4} textAnchor="end" fontSize="12" fill="#6c757d">
             0
@@ -257,7 +276,7 @@ function buildYearCountResults(
             <polyline
               fill="none"
               stroke="#0d6efd"
-              strokeWidth="2.5"
+              strokeWidth={smoothingMode === 'five-year' ? 3 : 2.5}
               points={polylinePoints}
             />
           ) : null}
@@ -268,15 +287,21 @@ function buildYearCountResults(
               cy={point.y}
               r="4"
               fill="#0d6efd"
-              style={onYearHover ? { cursor: 'pointer' } : undefined}
-              onMouseEnter={onYearHover ? () => onYearHover(point) : undefined}
-              onFocus={onYearHover ? () => onYearHover(point) : undefined}
-              tabIndex={onYearHover ? 0 : -1}
+              opacity={smoothingMode === 'five-year' ? 0.42 : 1}
+              style={onPointActivate ? { cursor: 'pointer' } : undefined}
+              onClick={onPointActivate ? () => onPointActivate(point) : undefined}
+              onKeyDown={onPointActivate ? (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onPointActivate(point);
+                }
+              } : undefined}
+              tabIndex={onPointActivate ? 0 : -1}
             >
               <title>
                 {onYearSelect
-                  ? `${point.year}: ${numberFormatter.format(point.total)} treff. Hold pekeren over for å åpne konkordanser i dette året.`
-                  : `${point.year}: ${numberFormatter.format(point.total)} treff`}
+                  ? `${point.year}: ${formatTrendValue(point.total, scaleMode)}. Velg punktet for konkordanser.`
+                  : `${point.year}: ${formatTrendValue(point.total, scaleMode)}`}
               </title>
             </circle>
           ))}
@@ -298,13 +323,32 @@ function buildYearCountResults(
         </svg>
       </div>
 
-      {activeYear && onYearSelect ? (
-        <div className="year-count-action">
-          <div>
-            <strong>{activeYear.year}</strong>: {numberFormatter.format(activeYear.total ?? 0)} treff
-            {typeof activeYear.docs === 'number' ? ` i ${numberFormatter.format(activeYear.docs)} dokumenter` : ''}
-          </div>
-          <div className="year-count-action-buttons">
+      <div className="year-count-summary">
+        <div className="year-count-card">
+          <strong>{scaleMode === 'absolute' ? 'Total treff' : 'Gjennomsnitt per år'}</strong>
+          <span>{formatTrendValue(summaryValue, scaleMode)}</span>
+        </div>
+        <div className="year-count-card">
+          <strong>{scaleMode === 'absolute' ? 'År med flest treff' : 'Høyeste år'}</strong>
+          <span>{peakRow.year}: {formatTrendValue(peakRow.total, scaleMode)}</span>
+        </div>
+        <div className="year-count-card">
+          <strong>År med treff</strong>
+          <span>{numberFormatter.format(yearsWithHits)}</span>
+        </div>
+      </div>
+
+      {activeYear && onYearSelect && onPointDismiss ? (
+        <Dialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
+          <DialogBlock>
+            <Heading level={2} data-size="sm">{activeYear.year}</Heading>
+            <Paragraph>
+              {formatTrendValue(activeYear.total ?? 0, scaleMode)}
+              {scaleMode === 'absolute' ? ' treff' : scaleMode === 'relative' ? ' treff per million token' : ''}
+              {typeof activeYear.docs === 'number' ? ` i ${numberFormatter.format(activeYear.docs)} dokumenter` : ''}
+            </Paragraph>
+          </DialogBlock>
+          <DialogBlock className="year-count-action-buttons">
             <Button
               type="button"
               data-size="sm"
@@ -322,12 +366,15 @@ function buildYearCountResults(
             >
               +/- 5 år
             </Button>
-          </div>
-        </div>
+          </DialogBlock>
+        </Dialog>
       ) : null}
 
       <div className="year-count-note">
-        Kurven viser hvordan treffene fordeler seg over tid.
+        {scaleMode === 'relative'
+          ? 'Kurven viser treff per million token.'
+          : 'Kurven viser hvordan treffene fordeler seg over tid.'}
+        {smoothingMode === 'five-year' ? ' Linjen er et sentrert femårsvindu; punktene viser faktiske år.' : ''}
         {onYearSelect ? ' Velg et punkt for å åpne konkordanser fra året.' : ''}
       </div>
     </div>
@@ -336,9 +383,13 @@ function buildYearCountResults(
 
 function buildComparisonYearCountResults(
   comparisonSeries: TrendComparisonSeries[],
+  comparisonLineSeries: TrendComparisonSeries[],
   activePoint: TrendComparisonHover | null,
-  onPointHover: (term: string, row: YearCountRow) => void,
+  onPointActivate: (term: string, row: YearCountRow) => void,
+  onPointDismiss: () => void,
   onYearSelect: (term: string, year: number, span: 'exact' | 'window5') => void,
+  scaleMode: TrendScaleMode,
+  smoothingMode: TrendSmoothingMode,
   limitationNotice?: string
 ): React.ReactNode {
   const colors = ['#1f6663', '#a34f2a', '#385f9d', '#8a5a91', '#847018', '#3d7a45', '#a33d62', '#59636b'];
@@ -355,7 +406,20 @@ function buildComparisonYearCountResults(
       }))
       .sort((a, b) => a.year - b.year)
   }));
-  const allRows = normalizedSeries.flatMap((series) => series.rows);
+  const normalizedLineSeries = comparisonLineSeries.map((series) => ({
+    ...series,
+    rows: series.rows
+      .filter((row) => Number.isFinite(row.year))
+      .map((row) => ({
+        year: Math.trunc(row.year),
+        total: typeof row.total === 'number' ? row.total : 0
+      }))
+      .sort((a, b) => a.year - b.year)
+  }));
+  const allRows = [
+    ...normalizedSeries.flatMap((series) => series.rows),
+    ...normalizedLineSeries.flatMap((series) => series.rows)
+  ];
 
   if (allRows.length === 0) {
     return <p key="no-comparison-year-results">Ingen årlige tellinger funnet.</p>;
@@ -377,23 +441,6 @@ function buildComparisonYearCountResults(
 
   return (
     <div className="year-count-results">
-      <div className="year-count-summary">
-        {normalizedSeries.map((series) => {
-          const total = series.rows.reduce((sum, row) => sum + row.total, 0);
-          const peak = series.rows.reduce<typeof series.rows[number] | null>(
-            (current, row) => !current || row.total > current.total ? row : current,
-            null
-          );
-          return (
-            <div className="year-count-card" key={`summary-${series.term}`}>
-              <strong>{series.term}</strong>
-              <span>{numberFormatter.format(total)} treff</span>
-              {peak ? <small>Topp {peak.year}: {numberFormatter.format(peak.total)}</small> : null}
-            </div>
-          );
-        })}
-      </div>
-
       {limitationNotice ? (
         <div className="year-count-note"><strong>Merk:</strong> {limitationNotice}</div>
       ) : null}
@@ -426,7 +473,7 @@ function buildComparisonYearCountResults(
             strokeWidth="1"
           />
           <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" fontSize="12" fill="#6c757d">
-            {numberFormatter.format(maxTotal)}
+            {formatTrendValue(maxTotal, scaleMode)}
           </text>
           <text x={padding.left - 8} y={padding.top + plotHeight + 4} textAnchor="end" fontSize="12" fill="#6c757d">
             0
@@ -437,13 +484,19 @@ function buildComparisonYearCountResults(
               x: xForYear(row.year),
               y: yForTotal(row.total)
             }));
+            const linePoints = (normalizedLineSeries.find((item) => item.term === series.term)?.rows ?? [])
+              .map((row) => ({
+                ...row,
+                x: xForYear(row.year),
+                y: yForTotal(row.total)
+              }));
             return (
               <g key={`series-${series.term}`}>
                 <polyline
                   fill="none"
                   stroke={series.color}
-                  strokeWidth="2.5"
-                  points={points.map((point) => `${point.x},${point.y}`).join(' ')}
+                  strokeWidth={smoothingMode === 'five-year' ? 3 : 2.5}
+                  points={linePoints.map((point) => `${point.x},${point.y}`).join(' ')}
                 />
                 {points.map((point) => (
                   <circle
@@ -452,12 +505,18 @@ function buildComparisonYearCountResults(
                     cy={point.y}
                     r="3.5"
                     fill={series.color}
+                    opacity={smoothingMode === 'five-year' ? 0.42 : 1}
                     tabIndex={0}
                     style={{ cursor: 'pointer' }}
-                    onMouseEnter={() => onPointHover(series.term, point)}
-                    onFocus={() => onPointHover(series.term, point)}
+                    onClick={() => onPointActivate(series.term, point)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onPointActivate(series.term, point);
+                      }
+                    }}
                   >
-                    <title>{series.term}, {point.year}: {numberFormatter.format(point.total)} treff</title>
+                    <title>{series.term}, {point.year}: {formatTrendValue(point.total, scaleMode)}</title>
                   </circle>
                 ))}
               </g>
@@ -478,12 +537,34 @@ function buildComparisonYearCountResults(
         </svg>
       </div>
 
+      <div className="year-count-summary">
+        {normalizedSeries.map((series) => {
+          const total = series.rows.reduce((sum, row) => sum + row.total, 0);
+          const summaryValue = scaleMode === 'absolute' ? total : total / Math.max(series.rows.length, 1);
+          const peak = series.rows.reduce<typeof series.rows[number] | null>(
+            (current, row) => !current || row.total > current.total ? row : current,
+            null
+          );
+          return (
+            <div className="year-count-card" key={`summary-${series.term}`}>
+              <strong>{series.term}</strong>
+              <span>{formatTrendValue(summaryValue, scaleMode)}{scaleMode === 'absolute' ? ' treff' : ' i snitt'}</span>
+              {peak ? <small>Topp {peak.year}: {formatTrendValue(peak.total, scaleMode)}</small> : null}
+            </div>
+          );
+        })}
+      </div>
+
       {activePoint ? (
-        <div className="year-count-action">
-          <div>
-            <strong>{activePoint.term}</strong>, {activePoint.row.year}: {numberFormatter.format(activePoint.row.total ?? 0)} treff
-          </div>
-          <div className="year-count-action-buttons">
+        <Dialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
+          <DialogBlock>
+            <Heading level={2} data-size="sm">{activePoint.term}, {activePoint.row.year}</Heading>
+            <Paragraph>
+              {formatTrendValue(activePoint.row.total ?? 0, scaleMode)}
+              {scaleMode === 'absolute' ? ' treff' : scaleMode === 'relative' ? ' treff per million token' : ''}
+            </Paragraph>
+          </DialogBlock>
+          <DialogBlock className="year-count-action-buttons">
             <Button
               type="button"
               data-size="sm"
@@ -500,13 +581,86 @@ function buildComparisonYearCountResults(
             >
               +/- 5 år
             </Button>
-          </div>
-        </div>
+          </DialogBlock>
+        </Dialog>
       ) : null}
 
       <div className="year-count-note">
-        Linjene bruker samme skala. Velg et punkt for å åpne konkordanser for ordet og året.
+        {scaleMode === 'relative'
+          ? 'Linjene viser treff per million token på samme skala.'
+          : scaleMode === 'cohort'
+            ? 'Linjene viser hvert ords andel av de sammenlignede ordene per år.'
+            : 'Linjene bruker samme absolutte skala.'}
+        {smoothingMode === 'five-year' ? ' Linjene bruker et sentrert femårsvindu; punktene viser faktiske år.' : ''}
+        {' '}Velg et punkt for å åpne konkordanser for ordet og året.
       </div>
+    </div>
+  );
+}
+
+function TrendScaleControl({
+  mode,
+  smoothingMode,
+  hasComparison,
+  tokenStatsStatus,
+  onChange,
+  onSmoothingChange
+}: {
+  mode: TrendScaleMode;
+  smoothingMode: TrendSmoothingMode;
+  hasComparison: boolean;
+  tokenStatsStatus: 'loading' | 'ready' | 'error';
+  onChange: (mode: TrendScaleMode) => void;
+  onSmoothingChange: (mode: TrendSmoothingMode) => void;
+}) {
+  const relativeDisabled = tokenStatsStatus !== 'ready';
+  return (
+    <div className="trend-scale-toolbar">
+      <div className="trend-scale-control" role="group" aria-label="Skala for trendlinje">
+        <button
+          type="button"
+          aria-pressed={mode === 'absolute'}
+          onClick={() => onChange('absolute')}
+        >
+          Absolutt
+        </button>
+        <button
+          type="button"
+          aria-pressed={mode === 'relative'}
+          disabled={relativeDisabled}
+          title={relativeDisabled ? 'Tokenmengden er ikke klar ennå' : 'Vis treff per million token'}
+          onClick={() => onChange('relative')}
+        >
+          Relativ
+        </button>
+        <button
+          type="button"
+          aria-pressed={mode === 'cohort'}
+          disabled={!hasComparison}
+          title={hasComparison ? 'Vis andelen av de sammenlignede ordene' : 'Kohort krever minst to sammenlignede ord'}
+          onClick={() => onChange('cohort')}
+        >
+          Kohort
+        </button>
+      </div>
+      <div className="trend-scale-control" role="group" aria-label="Glatting av trendlinje">
+        <button
+          type="button"
+          aria-pressed={smoothingMode === 'annual'}
+          onClick={() => onSmoothingChange('annual')}
+        >
+          Årlig
+        </button>
+        <button
+          type="button"
+          aria-pressed={smoothingMode === 'five-year'}
+          onClick={() => onSmoothingChange('five-year')}
+        >
+          5-årig
+        </button>
+      </div>
+      {tokenStatsStatus === 'loading' ? <span>Laster tokenmengde …</span> : null}
+      {tokenStatsStatus === 'error' ? <span>Relativ visning er ikke tilgjengelig.</span> : null}
     </div>
   );
 }
@@ -543,6 +697,11 @@ function App() {
   const [trendComparisonSeries, setTrendComparisonSeries] = useState<TrendComparisonSeries[] | null>(null);
   const [trendComparisonHover, setTrendComparisonHover] = useState<TrendComparisonHover | null>(null);
   const [trendComparisonNotice, setTrendComparisonNotice] = useState('');
+  const [trendScaleMode, setTrendScaleMode] = useState<TrendScaleMode>('absolute');
+  const [trendSmoothingMode, setTrendSmoothingMode] = useState<TrendSmoothingMode>('annual');
+  const [corpusTokenStats, setCorpusTokenStats] = useState<CorpusTokenStatsResponse | null>(null);
+  const [tokenStatsStatus, setTokenStatsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const trendScalePreferenceRef = useRef<TrendScaleMode>('relative');
   const [showTrendConcordanceModal, setShowTrendConcordanceModal] = useState(false);
   const [trendConcordanceYear, setTrendConcordanceYear] = useState<number | null>(null);
   const [trendConcordanceRangeLabel, setTrendConcordanceRangeLabel] = useState<string>('');
@@ -957,6 +1116,45 @@ function App() {
     isSymmetric
   ]);
 
+  useEffect(() => {
+    if (metadataArray.length === 0) return;
+
+    const controller = new AbortController();
+    const { effectiveFilterIds, useFilter } = buildFilterSelection([MIN_YEAR, MAX_YEAR], true);
+    const request = buildCorpusTokenStatsRequest({ useFilter, filterIds: effectiveFilterIds });
+    setTokenStatsStatus('loading');
+    setCorpusTokenStats(null);
+    setTrendScaleMode((current) => current === 'relative' ? 'absolute' : current);
+
+    fetch(`https://api.nb.no/dhlab/imag/${request.endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request.body),
+      signal: controller.signal
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        }
+        return response.json() as Promise<CorpusTokenStatsResponse>;
+      })
+      .then((payload) => {
+        setCorpusTokenStats(payload);
+        setTokenStatsStatus('ready');
+        if (trendScalePreferenceRef.current === 'relative') {
+          setTrendScaleMode('relative');
+        }
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === 'AbortError') return;
+        console.warn('Token statistics unavailable:', error);
+        setCorpusTokenStats(null);
+        setTokenStatsStatus('error');
+      });
+
+    return () => controller.abort();
+  }, [metadataArray, selectedAuthors, selectedCategories, persistentFilterIds]);
+
   const performSearch = async (overrideQueryOrOptions?: string | SearchOverrides) => {
     const overrides: SearchOverrides = typeof overrideQueryOrOptions === 'string'
       ? { query: overrideQueryOrOptions }
@@ -1336,11 +1534,6 @@ function App() {
             ),
             0
           );
-          const firstSeriesWithHits = series.find((item) => item.rows.some((row) => (row.total ?? 0) > 0)) ?? series[0];
-          const initialRow = firstSeriesWithHits?.rows.find((row) => (row.total ?? 0) > 0)
-            ?? firstSeriesWithHits?.rows[0]
-            ?? null;
-
           setEstimatedExportTotal(total);
           setStatus(
             `Sammenligner ${comparisonTerms.length} ord over tid: ${numberFormatter.format(total)} treff totalt ` +
@@ -1352,9 +1545,7 @@ function App() {
           setTrendRows(null);
           setTrendQuery(trimmedQuery);
           setTrendComparisonSeries(series);
-          setTrendComparisonHover(firstSeriesWithHits && initialRow
-            ? { term: firstSeriesWithHits.term, row: initialRow }
-            : null);
+          setTrendComparisonHover(null);
           setTrendComparisonNotice(comparisonLimitationNotice);
           setResults(null);
           setDebugInfo({
@@ -1460,6 +1651,9 @@ function App() {
 
       if (endpointPath === "near_query" && activeResultMode === 'year-count') {
         const yearCountResp: YearCountResponse = await concResp.json();
+        if (trendScaleMode === 'cohort') {
+          setTrendScaleMode('absolute');
+        }
         const categoryText = selectedCategories.includes('All Categories')
           ? ''
           : ` in categories: ${selectedCategories.join(', ')}`;
@@ -1487,10 +1681,9 @@ function App() {
         );
         setLastConcordanceRows([]);
         setLastRenderContext(null);
-        const initialTrendHoverRow = rows.find((row) => (row.total ?? 0) > 0) ?? rows[0] ?? null;
         setTrendRows(rows);
         setTrendQuery(trimmedQuery);
-        setTrendHoverRow(initialTrendHoverRow);
+        setTrendHoverRow(null);
         setResults(null);
         setDebugInfo({
           endpoint: endpointPath,
@@ -2288,6 +2481,41 @@ function App() {
 
   const activeCorpus = buildFilterSelection(yearRange, false);
   const sourceLabel = persistentFilterIds ? 'Opplastet subkorpus' : 'ImagiNation-korpuset';
+  const tokensByYear = corpusTokenStats?.tokensByYear ?? {};
+  const displayedTrendRows = scaleSingleTrendRows(trendRows ?? [], trendScaleMode, tokensByYear);
+  const displayedComparisonSeries = scaleComparisonTrendSeries(
+    trendComparisonSeries ?? [],
+    trendScaleMode,
+    tokensByYear
+  );
+  const trendLineRows = trendSmoothingMode === 'annual'
+    ? displayedTrendRows
+    : smoothSingleTrendRows(trendRows ?? [], trendScaleMode, tokensByYear);
+  const comparisonLineSeries = trendSmoothingMode === 'annual'
+    ? displayedComparisonSeries
+    : smoothComparisonTrendSeries(trendComparisonSeries ?? [], trendScaleMode, tokensByYear);
+  const displayedTrendHover = trendHoverRow
+    ? displayedTrendRows.find((row) => row.year === trendHoverRow.year) ?? null
+    : null;
+  const displayedComparisonHover = trendComparisonHover
+    ? {
+        term: trendComparisonHover.term,
+        row: displayedComparisonSeries
+          .find((series) => series.term === trendComparisonHover.term)
+          ?.rows.find((row) => row.year === trendComparisonHover.row.year)
+      }
+    : null;
+  const validDisplayedComparisonHover = displayedComparisonHover?.row
+    ? { term: displayedComparisonHover.term, row: displayedComparisonHover.row }
+    : null;
+  const handleTrendScaleChange = (nextMode: TrendScaleMode) => {
+    if (nextMode === 'relative' && tokenStatsStatus !== 'ready') return;
+    if (nextMode === 'cohort' && (trendComparisonSeries?.length ?? 0) < 2) return;
+    trendScalePreferenceRef.current = nextMode;
+    setTrendScaleMode(nextMode);
+    setTrendHoverRow(null);
+    setTrendComparisonHover(null);
+  };
   const parameterModeLabel = resultMode === 'render'
     ? 'Konk'
     : resultMode === 'count'
@@ -2451,20 +2679,54 @@ function App() {
                 {buildConcordanceResults(lastConcordanceRows, lastRenderContext)}
               </>
             ) : trendComparisonSeries && trendComparisonSeries.length > 0 ? (
-              buildComparisonYearCountResults(
-                trendComparisonSeries,
-                trendComparisonHover,
-                (term, row) => setTrendComparisonHover({ term, row }),
-                (term, year, span) => { void openTrendConcordancesForYear(year, term, span); },
-                trendComparisonNotice
-              )
+              <>
+                <TrendScaleControl
+                  mode={trendScaleMode}
+                  smoothingMode={trendSmoothingMode}
+                  hasComparison
+                  tokenStatsStatus={tokenStatsStatus}
+                  onChange={handleTrendScaleChange}
+                  onSmoothingChange={setTrendSmoothingMode}
+                />
+                {buildComparisonYearCountResults(
+                  displayedComparisonSeries,
+                  comparisonLineSeries,
+                  validDisplayedComparisonHover,
+                  (term, row) => setTrendComparisonHover({ term, row }),
+                  () => setTrendComparisonHover(null),
+                  (term, year, span) => {
+                    setTrendComparisonHover(null);
+                    void openTrendConcordancesForYear(year, term, span);
+                  },
+                  trendScaleMode,
+                  trendSmoothingMode,
+                  trendComparisonNotice
+                )}
+              </>
             ) : trendRows && trendRows.length > 0 ? (
-              buildYearCountResults(
-                trendRows,
-                (year, span) => { void openTrendConcordancesForYear(year, trendQuery, span); },
-                trendHoverRow,
-                (row) => setTrendHoverRow(row)
-              )
+              <>
+                <TrendScaleControl
+                  mode={trendScaleMode}
+                  smoothingMode={trendSmoothingMode}
+                  hasComparison={false}
+                  tokenStatsStatus={tokenStatsStatus}
+                  onChange={handleTrendScaleChange}
+                  onSmoothingChange={setTrendSmoothingMode}
+                />
+                {buildYearCountResults(
+                  displayedTrendRows,
+                  trendLineRows,
+                  (year, span) => {
+                    setTrendHoverRow(null);
+                    void openTrendConcordancesForYear(year, trendQuery, span);
+                  },
+                  displayedTrendHover,
+                  (row) => setTrendHoverRow(row),
+                  () => setTrendHoverRow(null),
+                  trendScaleMode,
+                  trendSmoothingMode
+                )}
+              </>
             ) : (
               results ?? <Paragraph>Skriv inn et søk for å se resultater.</Paragraph>
             )}

@@ -8,19 +8,20 @@ interface ResultsPanelProps {
 }
 
 export function ResultsPanel({ status, isLoading, children }: ResultsPanelProps) {
+  const isError = status.toLowerCase().includes('error') || status.toLowerCase().includes('feil');
   return (
     <section className="results-panel" aria-labelledby="results-heading">
       <div className="results-panel__header">
         <h2 id="results-heading">Resultater</h2>
         {isLoading ? <Spinner aria-label="Søker" data-size="sm" /> : null}
       </div>
-      <Alert
-        className="status-message"
-        data-color={status.toLowerCase().includes('error') || status.toLowerCase().includes('feil') ? 'danger' : 'info'}
-        aria-live="polite"
-      >
-        {status}
-      </Alert>
+      {isError ? (
+        <Alert className="status-message" data-color="danger" aria-live="assertive">
+          {status}
+        </Alert>
+      ) : (
+        <p className="status-message status-message--quiet" aria-live="polite">{status}</p>
+      )}
       <div className="results-panel__content">{children}</div>
     </section>
   );
