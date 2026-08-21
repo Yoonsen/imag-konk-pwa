@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatTrendValue,
+  relativeFrequencyUnit,
   scaleComparisonTrendSeries,
   scaleSingleTrendRows,
   smoothComparisonTrendSeries,
@@ -28,8 +29,14 @@ describe('trend scaling', () => {
 
   it('formats each display mode distinctly', () => {
     expect(formatTrendValue(1234.4, 'absolute')).toBe('1 234');
-    expect(formatTrendValue(12.345, 'relative')).toBe('12,35');
+    expect(formatTrendValue(12.345, 'relative')).toBe('12,35 ppm');
+    expect(formatTrendValue(25_000, 'relative', 'percent')).toBe('2,5 %');
     expect(formatTrendValue(33.33, 'cohort')).toBe('33,3 %');
+  });
+
+  it('uses percent only for high-frequency relative series', () => {
+    expect(relativeFrequencyUnit([20, 500, 9_999])).toBe('ppm');
+    expect(relativeFrequencyUnit([20, 10_000])).toBe('percent');
   });
 
   it('uses a centered five-year average for absolute counts', () => {

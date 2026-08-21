@@ -1,5 +1,6 @@
 export type TrendScaleMode = 'absolute' | 'relative' | 'cohort';
 export type TrendSmoothingMode = 'annual' | 'five-year';
+export type RelativeFrequencyUnit = 'ppm' | 'percent';
 
 export interface TrendValueRow {
   year: number;
@@ -130,12 +131,23 @@ export function smoothComparisonTrendSeries<T extends TrendValueRow>(
   }));
 }
 
-export function formatTrendValue(value: number, mode: TrendScaleMode): string {
+export function relativeFrequencyUnit(values: number[]): RelativeFrequencyUnit {
+  const maxValue = Math.max(...values.filter(Number.isFinite), 0);
+  return maxValue >= 10_000 ? 'percent' : 'ppm';
+}
+
+export function formatTrendValue(
+  value: number,
+  mode: TrendScaleMode,
+  relativeUnit: RelativeFrequencyUnit = 'ppm'
+): string {
   if (mode === 'absolute') {
     return new Intl.NumberFormat('nb-NO', { maximumFractionDigits: 0 }).format(value);
   }
   if (mode === 'relative') {
-    return new Intl.NumberFormat('nb-NO', { maximumFractionDigits: 2 }).format(value);
+    const displayValue = relativeUnit === 'percent' ? value / 10_000 : value;
+    const formatted = new Intl.NumberFormat('nb-NO', { maximumFractionDigits: 2 }).format(displayValue);
+    return relativeUnit === 'percent' ? `${formatted} %` : `${formatted} ppm`;
   }
   return `${new Intl.NumberFormat('nb-NO', { maximumFractionDigits: 1 }).format(value)} %`;
 }

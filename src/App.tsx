@@ -36,6 +36,7 @@ import {
 } from './lib/csvExport';
 import {
   formatTrendValue,
+  relativeFrequencyUnit,
   scaleComparisonTrendSeries,
   scaleSingleTrendRows,
   smoothComparisonTrendSeries,
@@ -217,7 +218,7 @@ function buildYearCountResults(
   const maxYear = rows[rows.length - 1].year;
   const width = 720;
   const height = 240;
-  const padding = { top: 16, right: 16, bottom: 32, left: 48 };
+  const padding = { top: 16, right: 16, bottom: 32, left: 76 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const maxTotal = Math.max(
@@ -225,6 +226,16 @@ function buildYearCountResults(
     ...lineRows.map((row) => row.total),
     1
   );
+  const relativeUnit = relativeFrequencyUnit([
+    ...rows.map((row) => row.total),
+    ...lineRows.map((row) => row.total)
+  ]);
+  const formatValue = (value: number) => formatTrendValue(value, scaleMode, relativeUnit);
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+    ratio,
+    value: maxTotal * ratio,
+    y: padding.top + plotHeight - ratio * plotHeight
+  }));
   const points = rows.map((row) => {
     const x = rows.length === 1 || minYear === maxYear
       ? padding.left + plotWidth / 2
@@ -250,14 +261,27 @@ function buildYearCountResults(
     <div className="year-count-results">
       <div className="year-count-chart">
         <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Årlig telling">
-          <line
-            x1={padding.left}
-            y1={padding.top + plotHeight}
-            x2={padding.left + plotWidth}
-            y2={padding.top + plotHeight}
-            stroke="#adb5bd"
-            strokeWidth="1"
-          />
+          {yTicks.map((tick) => (
+            <g key={`year-y-tick-${tick.ratio}`}>
+              <line
+                x1={padding.left}
+                y1={tick.y}
+                x2={padding.left + plotWidth}
+                y2={tick.y}
+                stroke={tick.ratio === 0 ? '#adb5bd' : '#dfe3e0'}
+                strokeWidth="1"
+              />
+              <text
+                x={padding.left - 8}
+                y={tick.y + 4}
+                textAnchor="end"
+                fontSize="11"
+                fill="#6c757d"
+              >
+                {formatValue(tick.value)}
+              </text>
+            </g>
+          ))}
           <line
             x1={padding.left}
             y1={padding.top}
@@ -266,12 +290,6 @@ function buildYearCountResults(
             stroke="#adb5bd"
             strokeWidth="1"
           />
-          <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" fontSize="12" fill="#6c757d">
-            {formatTrendValue(maxTotal, scaleMode)}
-          </text>
-          <text x={padding.left - 8} y={padding.top + plotHeight + 4} textAnchor="end" fontSize="12" fill="#6c757d">
-            0
-          </text>
           {polylinePoints ? (
             <polyline
               fill="none"
@@ -300,8 +318,8 @@ function buildYearCountResults(
             >
               <title>
                 {onYearSelect
-                  ? `${point.year}: ${formatTrendValue(point.total, scaleMode)}. Velg punktet for konkordanser.`
-                  : `${point.year}: ${formatTrendValue(point.total, scaleMode)}`}
+                  ? `${point.year}: ${formatValue(point.total)}. Velg punktet for konkordanser.`
+                  : `${point.year}: ${formatValue(point.total)}`}
               </title>
             </circle>
           ))}
@@ -326,11 +344,11 @@ function buildYearCountResults(
       <div className="year-count-summary">
         <div className="year-count-card">
           <strong>{scaleMode === 'absolute' ? 'Total treff' : 'Gjennomsnitt per år'}</strong>
-          <span>{formatTrendValue(summaryValue, scaleMode)}</span>
+          <span>{formatValue(summaryValue)}</span>
         </div>
         <div className="year-count-card">
           <strong>{scaleMode === 'absolute' ? 'År med flest treff' : 'Høyeste år'}</strong>
-          <span>{peakRow.year}: {formatTrendValue(peakRow.total, scaleMode)}</span>
+          <span>{peakRow.year}: {formatValue(peakRow.total)}</span>
         </div>
         <div className="year-count-card">
           <strong>År med treff</strong>
@@ -343,8 +361,8 @@ function buildYearCountResults(
           <DialogBlock>
             <Heading level={2} data-size="sm">{activeYear.year}</Heading>
             <Paragraph>
-              {formatTrendValue(activeYear.total ?? 0, scaleMode)}
-              {scaleMode === 'absolute' ? ' treff' : scaleMode === 'relative' ? ' treff per million token' : ''}
+              {formatValue(activeYear.total ?? 0)}
+              {scaleMode === 'absolute' ? ' treff' : ''}
               {typeof activeYear.docs === 'number' ? ` i ${numberFormatter.format(activeYear.docs)} dokumenter` : ''}
             </Paragraph>
           </DialogBlock>
@@ -372,7 +390,9 @@ function buildYearCountResults(
 
       <div className="year-count-note">
         {scaleMode === 'relative'
-          ? 'Kurven viser treff per million token.'
+          ? relativeUnit === 'percent'
+            ? 'Kurven viser treff som prosent av tokenmengden.'
+            : 'Kurven viser treff per million token (ppm).'
           : 'Kurven viser hvordan treffene fordeler seg over tid.'}
         {smoothingMode === 'five-year' ? ' Linjen er et sentrert femårsvindu; punktene viser faktiske år.' : ''}
         {onYearSelect ? ' Velg et punkt for å åpne konkordanser fra året.' : ''}
@@ -427,17 +447,24 @@ function buildComparisonYearCountResults(
 
   const width = 720;
   const height = 260;
-  const padding = { top: 16, right: 16, bottom: 32, left: 48 };
+  const padding = { top: 16, right: 16, bottom: 32, left: 76 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const minYear = Math.min(...allRows.map((row) => row.year));
   const maxYear = Math.max(...allRows.map((row) => row.year));
   const maxTotal = Math.max(...allRows.map((row) => row.total), 1);
+  const relativeUnit = relativeFrequencyUnit(allRows.map((row) => row.total));
+  const formatValue = (value: number) => formatTrendValue(value, scaleMode, relativeUnit);
   const xForYear = (year: number) => minYear === maxYear
     ? padding.left + plotWidth / 2
     : padding.left + ((year - minYear) / (maxYear - minYear)) * plotWidth;
   const yForTotal = (total: number) => padding.top + plotHeight - (total / maxTotal) * plotHeight;
   const axisYears = Array.from(new Set([minYear, Math.round((minYear + maxYear) / 2), maxYear]));
+  const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+    ratio,
+    value: maxTotal * ratio,
+    y: padding.top + plotHeight - ratio * plotHeight
+  }));
 
   return (
     <div className="year-count-results">
@@ -456,14 +483,27 @@ function buildComparisonYearCountResults(
 
       <div className="year-count-chart">
         <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Sammenlignede årlige tellinger">
-          <line
-            x1={padding.left}
-            y1={padding.top + plotHeight}
-            x2={padding.left + plotWidth}
-            y2={padding.top + plotHeight}
-            stroke="#adb5bd"
-            strokeWidth="1"
-          />
+          {yTicks.map((tick) => (
+            <g key={`comparison-y-tick-${tick.ratio}`}>
+              <line
+                x1={padding.left}
+                y1={tick.y}
+                x2={padding.left + plotWidth}
+                y2={tick.y}
+                stroke={tick.ratio === 0 ? '#adb5bd' : '#dfe3e0'}
+                strokeWidth="1"
+              />
+              <text
+                x={padding.left - 8}
+                y={tick.y + 4}
+                textAnchor="end"
+                fontSize="11"
+                fill="#6c757d"
+              >
+                {formatValue(tick.value)}
+              </text>
+            </g>
+          ))}
           <line
             x1={padding.left}
             y1={padding.top}
@@ -472,12 +512,6 @@ function buildComparisonYearCountResults(
             stroke="#adb5bd"
             strokeWidth="1"
           />
-          <text x={padding.left - 8} y={padding.top + 4} textAnchor="end" fontSize="12" fill="#6c757d">
-            {formatTrendValue(maxTotal, scaleMode)}
-          </text>
-          <text x={padding.left - 8} y={padding.top + plotHeight + 4} textAnchor="end" fontSize="12" fill="#6c757d">
-            0
-          </text>
           {normalizedSeries.map((series) => {
             const points = series.rows.map((row) => ({
               ...row,
@@ -516,7 +550,7 @@ function buildComparisonYearCountResults(
                       }
                     }}
                   >
-                    <title>{series.term}, {point.year}: {formatTrendValue(point.total, scaleMode)}</title>
+                    <title>{series.term}, {point.year}: {formatValue(point.total)}</title>
                   </circle>
                 ))}
               </g>
@@ -548,8 +582,8 @@ function buildComparisonYearCountResults(
           return (
             <div className="year-count-card" key={`summary-${series.term}`}>
               <strong>{series.term}</strong>
-              <span>{formatTrendValue(summaryValue, scaleMode)}{scaleMode === 'absolute' ? ' treff' : ' i snitt'}</span>
-              {peak ? <small>Topp {peak.year}: {formatTrendValue(peak.total, scaleMode)}</small> : null}
+              <span>{formatValue(summaryValue)}{scaleMode === 'absolute' ? ' treff' : ' i snitt'}</span>
+              {peak ? <small>Topp {peak.year}: {formatValue(peak.total)}</small> : null}
             </div>
           );
         })}
@@ -560,8 +594,8 @@ function buildComparisonYearCountResults(
           <DialogBlock>
             <Heading level={2} data-size="sm">{activePoint.term}, {activePoint.row.year}</Heading>
             <Paragraph>
-              {formatTrendValue(activePoint.row.total ?? 0, scaleMode)}
-              {scaleMode === 'absolute' ? ' treff' : scaleMode === 'relative' ? ' treff per million token' : ''}
+              {formatValue(activePoint.row.total ?? 0)}
+              {scaleMode === 'absolute' ? ' treff' : ''}
             </Paragraph>
           </DialogBlock>
           <DialogBlock className="year-count-action-buttons">
@@ -587,7 +621,9 @@ function buildComparisonYearCountResults(
 
       <div className="year-count-note">
         {scaleMode === 'relative'
-          ? 'Linjene viser treff per million token på samme skala.'
+          ? relativeUnit === 'percent'
+            ? 'Linjene viser treff som prosent av tokenmengden på samme skala.'
+            : 'Linjene viser treff per million token (ppm) på samme skala.'
           : scaleMode === 'cohort'
             ? 'Linjene viser hvert ords andel av de sammenlignede ordene per år.'
             : 'Linjene bruker samme absolutte skala.'}
