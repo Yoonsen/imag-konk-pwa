@@ -34,6 +34,7 @@ import {
   safeFilenamePart,
   type ConcordanceExportRow
 } from './lib/csvExport';
+import { downloadTrendChartJpeg } from './lib/chartExport';
 import {
   normalizeUrn,
   resolveDhlabMetadata,
@@ -183,6 +184,7 @@ const MAX_YEAR = 1905;
 const PLACE_RESOLVER_URL = 'https://api.nb.no/dhlab/imag/api/place/resolve';
 
 const numberFormatter = new Intl.NumberFormat('nb-NO');
+const TREND_COLORS = ['#1f6663', '#a34f2a', '#385f9d', '#8a5a91', '#847018', '#3d7a45', '#a33d62', '#59636b'];
 
 function buildYearCountResults(
   yearRows: YearCountRow[],
@@ -192,7 +194,8 @@ function buildYearCountResults(
   onPointActivate?: (row: YearCountRow) => void,
   onPointDismiss?: () => void,
   scaleMode: TrendScaleMode = 'absolute',
-  smoothingMode: TrendSmoothingMode = 'annual'
+  smoothingMode: TrendSmoothingMode = 'annual',
+  showPoints = true
 ): React.ReactNode {
   const rows = yearRows
     .filter((row) => Number.isFinite(row.year))
@@ -303,7 +306,7 @@ function buildYearCountResults(
               points={polylinePoints}
             />
           ) : null}
-          {points.map((point) => (
+          {showPoints ? points.map((point) => (
             <circle
               key={`year-point-${point.year}`}
               cx={point.x}
@@ -327,7 +330,7 @@ function buildYearCountResults(
                   : `${point.year}: ${formatValue(point.total)}`}
               </title>
             </circle>
-          ))}
+          )) : null}
           {axisLabelIndexes.map((index) => {
             const point = points[index];
             return (
@@ -399,8 +402,12 @@ function buildYearCountResults(
             ? 'Kurven viser treff som prosent av tokenmengden.'
             : 'Kurven viser treff per million token (ppm).'
           : 'Kurven viser hvordan treffene fordeler seg over tid.'}
-        {smoothingMode === 'five-year' ? ' Linjen er et sentrert femårsvindu; punktene viser faktiske år.' : ''}
-        {onYearSelect ? ' Velg et punkt for å åpne konkordanser fra året.' : ''}
+        {smoothingMode === 'five-year'
+          ? showPoints
+            ? ' Linjen er et sentrert femårsvindu; punktene viser faktiske år.'
+            : ' Linjen er et sentrert femårsvindu.'
+          : ''}
+        {onYearSelect && showPoints ? ' Velg et punkt for å åpne konkordanser fra året.' : ''}
       </div>
     </div>
   );
@@ -415,12 +422,12 @@ function buildComparisonYearCountResults(
   onYearSelect: (term: string, year: number, span: 'exact' | 'window5') => void,
   scaleMode: TrendScaleMode,
   smoothingMode: TrendSmoothingMode,
+  showPoints: boolean,
   limitationNotice?: string
 ): React.ReactNode {
-  const colors = ['#1f6663', '#a34f2a', '#385f9d', '#8a5a91', '#847018', '#3d7a45', '#a33d62', '#59636b'];
   const normalizedSeries = comparisonSeries.map((series, index) => ({
     ...series,
-    color: colors[index % colors.length],
+    color: TREND_COLORS[index % TREND_COLORS.length],
     rows: series.rows
       .filter((row) => Number.isFinite(row.year))
       .map((row) => ({
@@ -537,7 +544,7 @@ function buildComparisonYearCountResults(
                   strokeWidth={smoothingMode === 'five-year' ? 3 : 2.5}
                   points={linePoints.map((point) => `${point.x},${point.y}`).join(' ')}
                 />
-                {points.map((point) => (
+                {showPoints ? points.map((point) => (
                   <circle
                     key={`${series.term}-${point.year}`}
                     cx={point.x}
@@ -557,7 +564,7 @@ function buildComparisonYearCountResults(
                   >
                     <title>{series.term}, {point.year}: {formatValue(point.total)}</title>
                   </circle>
-                ))}
+                )) : null}
               </g>
             );
           })}
@@ -632,8 +639,12 @@ function buildComparisonYearCountResults(
           : scaleMode === 'cohort'
             ? 'Linjene viser hvert ords andel av de sammenlignede ordene per år.'
             : 'Linjene bruker samme absolutte skala.'}
-        {smoothingMode === 'five-year' ? ' Linjene bruker et sentrert femårsvindu; punktene viser faktiske år.' : ''}
-        {' '}Velg et punkt for å åpne konkordanser for ordet og året.
+        {smoothingMode === 'five-year'
+          ? showPoints
+            ? ' Linjene bruker et sentrert femårsvindu; punktene viser faktiske år.'
+            : ' Linjene bruker et sentrert femårsvindu.'
+          : ''}
+        {showPoints ? ' Velg et punkt for å åpne konkordanser for ordet og året.' : ''}
       </div>
     </div>
   );
@@ -642,17 +653,21 @@ function buildComparisonYearCountResults(
 function TrendScaleControl({
   mode,
   smoothingMode,
+  showPoints,
   hasComparison,
   tokenStatsStatus,
   onChange,
-  onSmoothingChange
+  onSmoothingChange,
+  onShowPointsChange
 }: {
   mode: TrendScaleMode;
   smoothingMode: TrendSmoothingMode;
+  showPoints: boolean;
   hasComparison: boolean;
   tokenStatsStatus: 'loading' | 'ready' | 'error';
   onChange: (mode: TrendScaleMode) => void;
   onSmoothingChange: (mode: TrendSmoothingMode) => void;
+  onShowPointsChange: (show: boolean) => void;
 }) {
   const relativeDisabled = tokenStatsStatus !== 'ready';
   return (
@@ -700,6 +715,15 @@ function TrendScaleControl({
           5-årig
         </button>
       </div>
+      <div className="trend-scale-control" role="group" aria-label="Visning av datapunkter">
+        <button
+          type="button"
+          aria-pressed={showPoints}
+          onClick={() => onShowPointsChange(!showPoints)}
+        >
+          Punkter
+        </button>
+      </div>
       {tokenStatsStatus === 'loading' ? <span>Laster tokenmengde …</span> : null}
       {tokenStatsStatus === 'error' ? <span>Relativ visning er ikke tilgjengelig.</span> : null}
     </div>
@@ -740,6 +764,7 @@ function App() {
   const [trendComparisonNotice, setTrendComparisonNotice] = useState('');
   const [trendScaleMode, setTrendScaleMode] = useState<TrendScaleMode>('absolute');
   const [trendSmoothingMode, setTrendSmoothingMode] = useState<TrendSmoothingMode>('annual');
+  const [showTrendPoints, setShowTrendPoints] = useState(true);
   const [corpusTokenStats, setCorpusTokenStats] = useState<CorpusTokenStatsResponse | null>(null);
   const [tokenStatsStatus, setTokenStatsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const trendScalePreferenceRef = useRef<TrendScaleMode>('relative');
@@ -761,6 +786,7 @@ function App() {
   const [exportStatus, setExportStatus] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const trendExportRef = useRef<HTMLDivElement>(null);
   const corpusPanelButtonRef = useRef<HTMLButtonElement>(null);
   const parametersPanelButtonRef = useRef<HTMLButtonElement>(null);
   const exportPanelButtonRef = useRef<HTMLButtonElement>(null);
@@ -2457,6 +2483,42 @@ function App() {
     XLSX.writeFile(workbook, `concordance-${dateStamp}.xlsx`);
   };
 
+  const handleDownloadTrendImage = async () => {
+    const svg = trendExportRef.current?.querySelector('svg');
+    if (!svg) {
+      setExportStatus('Feil: Ingen trendgraf er klar for eksport.');
+      return;
+    }
+
+    setIsExporting(true);
+    setExportStatus('Lager JPG av trendgrafen …');
+    try {
+      const scaleLabel = trendScaleMode === 'relative'
+        ? 'relativ'
+        : trendScaleMode === 'cohort'
+          ? 'kohort'
+          : 'absolutt';
+      const smoothingLabel = trendSmoothingMode === 'five-year' ? '5-årig' : 'årlig';
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      await downloadTrendChartJpeg(
+        svg,
+        `trend-${safeFilenamePart(trendQuery || query)}-${dateStamp}.jpg`,
+        {
+          title: `${trendQuery || query} – ${scaleLabel}, ${smoothingLabel}`,
+          legend: trendComparisonSeries?.map((series, index) => ({
+            label: series.term,
+            color: TREND_COLORS[index % TREND_COLORS.length]
+          }))
+        }
+      );
+      setExportStatus('Trendgrafen er lastet ned som JPG.');
+    } catch (error) {
+      setExportStatus(`Feil: ${error instanceof Error ? error.message : 'Kunne ikke eksportere trendgrafen.'}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const handleConcordanceClick = (metadata: Metadata | undefined, link: string) => {
     if (metadata) {
       setModalData({
@@ -2666,6 +2728,13 @@ function App() {
     if (activePanel === 'export') {
       return (
         <ExportPanel
+          contentType={
+            (trendComparisonSeries && trendComparisonSeries.length > 0) || (trendRows && trendRows.length > 0)
+              ? 'trend'
+              : lastConcordanceRows.length > 0
+                ? 'concordance'
+                : 'none'
+          }
           query={query}
           selectedDocuments={activeCorpus.filteredMetadata.length}
           previewRows={lastConcordanceRows.length}
@@ -2675,6 +2744,7 @@ function App() {
           canExport={query.trim().length > 0 && activeCorpus.filteredMetadata.length > 0}
           onDownloadPreview={handleDownloadConcordance}
           onDownloadFull={() => { void handleFullCsvExport(); }}
+          onDownloadTrendImage={() => { void handleDownloadTrendImage(); }}
           onCancelExport={handleCancelExport}
         />
       );
@@ -2762,49 +2832,59 @@ function App() {
                 <TrendScaleControl
                   mode={trendScaleMode}
                   smoothingMode={trendSmoothingMode}
+                  showPoints={showTrendPoints}
                   hasComparison
                   tokenStatsStatus={tokenStatsStatus}
                   onChange={handleTrendScaleChange}
                   onSmoothingChange={setTrendSmoothingMode}
+                  onShowPointsChange={setShowTrendPoints}
                 />
-                {buildComparisonYearCountResults(
-                  displayedComparisonSeries,
-                  comparisonLineSeries,
-                  validDisplayedComparisonHover,
-                  (term, row) => setTrendComparisonHover({ term, row }),
-                  () => setTrendComparisonHover(null),
-                  (term, year, span) => {
-                    setTrendComparisonHover(null);
-                    void openTrendConcordancesForYear(year, term, span);
-                  },
-                  trendScaleMode,
-                  trendSmoothingMode,
-                  trendComparisonNotice
-                )}
+                <div ref={trendExportRef}>
+                  {buildComparisonYearCountResults(
+                    displayedComparisonSeries,
+                    comparisonLineSeries,
+                    validDisplayedComparisonHover,
+                    (term, row) => setTrendComparisonHover({ term, row }),
+                    () => setTrendComparisonHover(null),
+                    (term, year, span) => {
+                      setTrendComparisonHover(null);
+                      void openTrendConcordancesForYear(year, term, span);
+                    },
+                    trendScaleMode,
+                    trendSmoothingMode,
+                    showTrendPoints,
+                    trendComparisonNotice
+                  )}
+                </div>
               </>
             ) : trendRows && trendRows.length > 0 ? (
               <>
                 <TrendScaleControl
                   mode={trendScaleMode}
                   smoothingMode={trendSmoothingMode}
+                  showPoints={showTrendPoints}
                   hasComparison={false}
                   tokenStatsStatus={tokenStatsStatus}
                   onChange={handleTrendScaleChange}
                   onSmoothingChange={setTrendSmoothingMode}
+                  onShowPointsChange={setShowTrendPoints}
                 />
-                {buildYearCountResults(
-                  displayedTrendRows,
-                  trendLineRows,
-                  (year, span) => {
-                    setTrendHoverRow(null);
-                    void openTrendConcordancesForYear(year, trendQuery, span);
-                  },
-                  displayedTrendHover,
-                  (row) => setTrendHoverRow(row),
-                  () => setTrendHoverRow(null),
-                  trendScaleMode,
-                  trendSmoothingMode
-                )}
+                <div ref={trendExportRef}>
+                  {buildYearCountResults(
+                    displayedTrendRows,
+                    trendLineRows,
+                    (year, span) => {
+                      setTrendHoverRow(null);
+                      void openTrendConcordancesForYear(year, trendQuery, span);
+                    },
+                    displayedTrendHover,
+                    (row) => setTrendHoverRow(row),
+                    () => setTrendHoverRow(null),
+                    trendScaleMode,
+                    trendSmoothingMode,
+                    showTrendPoints
+                  )}
+                </div>
               </>
             ) : (
               results ?? <Paragraph>Skriv inn et søk for å se resultater.</Paragraph>

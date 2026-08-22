@@ -2,6 +2,7 @@ import { Alert, Button, Paragraph, Spinner, Tag } from '@digdir/designsystemet-r
 import { FULL_EXPORT_LIMIT } from '../lib/searchRequests';
 
 interface ExportPanelProps {
+  contentType: 'trend' | 'concordance' | 'none';
   query: string;
   selectedDocuments: number;
   previewRows: number;
@@ -11,10 +12,12 @@ interface ExportPanelProps {
   canExport: boolean;
   onDownloadPreview: () => void;
   onDownloadFull: () => void;
+  onDownloadTrendImage: () => void;
   onCancelExport: () => void;
 }
 
 export function ExportPanel({
+  contentType,
   query,
   selectedDocuments,
   previewRows,
@@ -24,9 +27,54 @@ export function ExportPanel({
   canExport,
   onDownloadPreview,
   onDownloadFull,
+  onDownloadTrendImage,
   onCancelExport
 }: ExportPanelProps) {
   const overLimit = estimatedTotal !== null && estimatedTotal > FULL_EXPORT_LIMIT;
+  const statusMessage = exportStatus ? (
+    <Alert data-color={exportStatus.toLowerCase().includes('feil') ? 'danger' : 'info'} aria-live="polite">
+      {isExporting ? <Spinner aria-label="Eksporterer" data-size="sm" /> : null}
+      <Paragraph data-size="sm">{exportStatus}</Paragraph>
+    </Alert>
+  ) : null;
+
+  if (contentType === 'trend') {
+    return (
+      <div className="settings-stack">
+        <Paragraph data-size="sm" className="panel-intro">
+          Last ned trendgrafen slik den vises nå, med valgt skala, glatting og punktvisning.
+        </Paragraph>
+        <div className="export-summary">
+          <div>
+            <span className="field-caption">Søkeuttrykk</span>
+            <strong>{query.trim()}</strong>
+          </div>
+          <div>
+            <span className="field-caption">Aktivt subkorpus</span>
+            <strong>{selectedDocuments.toLocaleString('nb-NO')} dokumenter</strong>
+          </div>
+        </div>
+        <div className="chip-list export-limits" aria-label="Eksportformat">
+          <Tag data-color="neutral">JPG</Tag>
+          <Tag data-color="neutral">Egnet for presentasjoner</Tag>
+        </div>
+        {statusMessage}
+        <Button type="button" onClick={onDownloadTrendImage} disabled={isExporting}>
+          Last ned graf som JPG
+        </Button>
+      </div>
+    );
+  }
+
+  if (contentType === 'none') {
+    return (
+      <div className="settings-stack">
+        <Paragraph data-size="sm" className="panel-intro">
+          Vis en trendgraf eller konkordanser for å få relevante eksportvalg.
+        </Paragraph>
+      </div>
+    );
+  }
 
   return (
     <div className="settings-stack">
@@ -63,12 +111,7 @@ export function ExportPanel({
           Søket har flere enn {FULL_EXPORT_LIMIT.toLocaleString('nb-NO')} treff. Snevre inn søket eller subkorpuset før du eksporterer.
         </Alert>
       ) : null}
-      {exportStatus ? (
-        <Alert data-color={exportStatus.toLowerCase().includes('feil') ? 'danger' : 'info'} aria-live="polite">
-          {isExporting ? <Spinner aria-label="Eksporterer" data-size="sm" /> : null}
-          <Paragraph data-size="sm">{exportStatus}</Paragraph>
-        </Alert>
-      ) : null}
+      {statusMessage}
 
       <div className="button-row">
         <Button
