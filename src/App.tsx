@@ -54,6 +54,7 @@ import {
   type TrendScaleMode,
   type TrendSmoothingMode
 } from './lib/trendScaling';
+import packageMetadata from '../package.json';
 
 interface Metadata {
   id: number;
@@ -189,6 +190,8 @@ const PLACE_RESOLVER_URL = 'https://api.nb.no/dhlab/imag/api/place/resolve';
 
 const numberFormatter = new Intl.NumberFormat('nb-NO');
 const TREND_COLORS = ['#1f6663', '#a34f2a', '#385f9d', '#8a5a91', '#847018', '#3d7a45', '#a33d62', '#59636b'];
+const APP_VERSION = packageMetadata.version;
+const APP_COMMIT = (import.meta.env.VITE_APP_COMMIT || 'local').slice(0, 7);
 
 function buildYearCountResults(
   yearRows: YearCountRow[],
@@ -2738,6 +2741,9 @@ function App() {
               <pre>{JSON.stringify({ request: debugRequest, info: debugInfo }, null, 2)}</pre>
             </details>
           ) : null}
+          <Paragraph data-size="xs" className="app-version-detail">
+            ImagiNation korpusutforsker v{APP_VERSION} · bygg {APP_COMMIT}
+          </Paragraph>
         </div>
       );
     }
@@ -2751,11 +2757,16 @@ function App() {
         <div className="app-header__content">
           <div>
             <span className="app-kicker">Digitalt korpusverktøy</span>
-            <Heading level={1} data-size="md">ImagiNation-konkordanser</Heading>
+            <Heading level={1} data-size="md">ImagiNation korpusutforsker</Heading>
           </div>
-          <span className="header-corpus-count">
-            {activeCorpus.filteredMetadata.length.toLocaleString('nb-NO')} dokumenter
-          </span>
+          <div className="app-header__meta">
+            <span className="header-corpus-count">
+              {activeCorpus.filteredMetadata.length.toLocaleString('nb-NO')} dokumenter
+            </span>
+            <span className="app-version" title={`Versjon ${APP_VERSION}, bygg ${APP_COMMIT}`}>
+              v{APP_VERSION} · {APP_COMMIT}
+            </span>
+          </div>
         </div>
       </header>
 

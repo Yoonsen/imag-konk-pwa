@@ -1,7 +1,7 @@
 {
   "name": "imag-konk-pwa",
-  "version": "1.0.0",
-  "description": "App for å finne konkordanser ImagiNation korpus",
+  "version": "1.1.0",
+  "description": "Korpusutforsker for konkordanser, tellinger og trender i ImagiNation",
   "type": "module",
   "scripts": {
     "dev": "vite",

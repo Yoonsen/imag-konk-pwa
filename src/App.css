@@ -105,6 +105,26 @@ code {
   font-size: 0.85rem;
 }
 
+.app-header__meta {
+  display: flex;
+  align-items: flex-end;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.app-version,
+.app-version-detail {
+  color: var(--app-muted);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+}
+
+.app-version-detail {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--app-line);
+}
+
 .app-workspace {
   display: grid;
   grid-template-columns: 96px minmax(0, 1fr);
