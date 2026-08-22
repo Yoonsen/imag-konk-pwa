@@ -51,23 +51,6 @@ export function matchingPreviewProfile(
   )?.id ?? null;
 }
 
-export function comparisonTermsForMode(
-  termGroups: string[][] | null,
-  resultMode: ResultMode
-): string[] | null {
-  if (resultMode === 'render' || !termGroups?.length) {
-    return null;
-  }
-
-  const uniqueTerms = Array.from(new Set(
-    termGroups[0].map((term) => term.trim()).filter(Boolean)
-  ));
-  if (termGroups.length > 1) {
-    return uniqueTerms.length > 0 ? uniqueTerms : null;
-  }
-  return uniqueTerms.length >= 2 ? uniqueTerms : null;
-}
-
 export interface SearchParameterInput {
   resultMode: ResultMode;
   perBook: number;

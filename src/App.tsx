@@ -22,13 +22,17 @@ import {
   buildCountRequest,
   buildCorpusTokenStatsRequest,
   buildFullExportRequest,
-  comparisonTermsForMode,
   isExportWithinLimit,
   isObviouslyBroadExportQuery,
   normalizeSearchParameters,
   type CorpusTokenStatsResponse,
   type ResultMode
 } from './lib/searchRequests';
+import {
+  parseComparisonExpressions,
+  parseTermGroups,
+  toSingleTermGroups
+} from './lib/searchSyntax';
 import {
   downloadCsv,
   safeFilenamePart,
@@ -850,70 +854,6 @@ function App() {
     return { filteredMetadata, effectiveFilterIds, useFilter };
   };
 
-  const parseTermGroups = (rawInput: string): string[][] | null => {
-    const trimmed = rawInput.trim();
-    if (!trimmed) return null;
-
-    // 1) Strict JSON mode: [["a","b"],["c"]]
-    if (trimmed.startsWith('[[')) {
-      const parsed = JSON.parse(trimmed);
-      const isValid =
-        Array.isArray(parsed) &&
-        parsed.length > 0 &&
-        parsed.every((group) =>
-          Array.isArray(group) &&
-          group.length > 0 &&
-          group.every((term) => typeof term === 'string' && term.trim().length > 0)
-        );
-
-      if (!isValid) {
-        throw new Error('termGroups must be JSON like [["a","b"],["c"]].');
-      }
-
-      return parsed.map((group: string[]) => group.map((term) => term.trim()));
-    }
-
-    // 2) Relaxed mode: [spise, spiste] middag -> [["spise","spiste"],["middag"]]
-    const groups: string[][] = [];
-    const bracketRegex = /\[([^\]]+)\]/g;
-    let match: RegExpExecArray | null;
-    let consumed = '';
-
-    while ((match = bracketRegex.exec(trimmed)) !== null) {
-      const inside = match[1];
-      const terms = inside
-        .split(',')
-        .map((term) => term.trim().replace(/^["']|["']$/g, ''))
-        .filter(Boolean);
-      if (terms.length > 0) groups.push(terms);
-      consumed += match[0];
-    }
-
-    // Remove bracket groups and tokenize remaining text into single-term groups.
-    const leftover = trimmed.replace(bracketRegex, ' ').trim();
-    if (leftover) {
-      const singles = leftover
-        .split(/\s+/)
-        .map((term) => term.trim().replace(/^["']|["']$/g, ''))
-        .filter(Boolean);
-      singles.forEach((term) => groups.push([term]));
-    }
-
-    if (groups.length === 0) {
-      throw new Error('No valid term groups found.');
-    }
-
-    return groups;
-  };
-
-  const toSingleTermGroups = (rawQuery: string): string[][] => {
-    return rawQuery
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((token) => [token]);
-  };
-
   const parseResolvableGeoInput = (rawQuery: string): {
     placeText: string;
     remainder: string;
@@ -1362,13 +1302,31 @@ function App() {
         return;
       }
 
-      const hasQuotedPhrase = /^"[^"]+"$/.test(trimmedQuery);
-      const normalizedQuery = hasQuotedPhrase ? trimmedQuery.slice(1, -1).trim() : trimmedQuery;
+      let comparisonExpressions: ReturnType<typeof parseComparisonExpressions> = null;
+      try {
+        comparisonExpressions = parseComparisonExpressions(trimmedQuery);
+      } catch (error) {
+        setStatus(`Ugyldig sammenligning: ${error instanceof Error ? error.message : 'Ukjent syntaksfeil'}`);
+        setResults(<p key="comparison-format-error" className="error">Kontroller krøllparenteser og semikolon.</p>);
+        return;
+      }
+      if (comparisonExpressions && activeResultMode === 'render') {
+        setStatus('Sammenligning med {…; …} er foreløpig tilgjengelig i Telling og Trend.');
+        setResults(<p key="comparison-render-notice">Velg Telling eller Trend for å sammenligne komplette søk.</p>);
+        return;
+      }
+
+      const primaryComparison = comparisonExpressions?.[0];
+      const queryForParsing = primaryComparison?.label ?? trimmedQuery;
+      const hasQuotedPhrase = primaryComparison?.matchMode === 'sequence' || /^"[^"]+"$/.test(queryForParsing);
+      const normalizedQuery = hasQuotedPhrase ? queryForParsing.slice(1, -1).trim() : queryForParsing;
       const words = normalizedQuery.split(/\s+/).filter(Boolean);
-      let parsedTermGroups: string[][] | null = null;
-      const termGroupsSource = termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
+      let parsedTermGroups: string[][] | null = primaryComparison?.termGroups ?? null;
+      const termGroupsSource = primaryComparison
+        ? ''
+        : termGroupsInput.trim() || (trimmedQuery.includes('[') ? trimmedQuery : '');
       const autoTermGroups =
-        !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 1
+        !primaryComparison && !termGroupsInput.trim() && !trimmedQuery.includes('[') && words.length >= 1
           ? toSingleTermGroups(normalizedQuery)
           : null;
 
@@ -1383,21 +1341,15 @@ function App() {
       }
 
       const effectiveTermGroups = (geoQuery.terms || geoQuery.termGroups) ? null : (parsedTermGroups ?? autoTermGroups);
-      const comparisonTerms = !geoQuery.terms && !geoQuery.termGroups
-        ? comparisonTermsForMode(parsedTermGroups, activeResultMode)
-        : null;
-      const comparisonLimitationNotice = comparisonTerms && parsedTermGroups && parsedTermGroups.length > 1
-        ? `Bare den første gruppen sammenlignes nå. ${parsedTermGroups.length - 1} nærhetsgruppe${parsedTermGroups.length > 2 ? 'r' : ''} er utelatt.`
-        : '';
 
       if (!effectiveTermGroups && !geoQuery.terms && !geoQuery.termGroups) {
         alert("Please enter a search term");
         return;
       }
 
-      if (comparisonTerms && comparisonTerms.length > MAX_COMPARISON_TERMS) {
-        setStatus(`Du kan sammenligne opptil ${MAX_COMPARISON_TERMS} ord om gangen.`);
-        setResults(<p key="too-many-comparison-terms">Reduser antall ord i hakeparentesen.</p>);
+      if (comparisonExpressions && comparisonExpressions.length > MAX_COMPARISON_TERMS) {
+        setStatus(`Du kan sammenligne opptil ${MAX_COMPARISON_TERMS} søk om gangen.`);
+        setResults(<p key="too-many-comparison-terms">Reduser antall uttrykk mellom krøllparentesene.</p>);
         return;
       }
 
@@ -1571,17 +1523,23 @@ function App() {
       let activeGeoToken = geoQuery.terms?.[0] ?? null;
       let geoFallbackApplied = false;
 
-      if (comparisonTerms && endpointPath === 'near_query') {
-        const comparisonResponses = await Promise.all(comparisonTerms.map(async (term) => {
+      if (comparisonExpressions && endpointPath === 'near_query') {
+        const comparisonResponses: Array<{
+          term: string;
+          response: Response;
+        }> = [];
+        for (const [index, expression] of comparisonExpressions.entries()) {
+          setStatus(`Kjører sammenligning ${index + 1} av ${comparisonExpressions.length}: ${expression.label} …`);
           const response = await runSearchRequest({
             ...requestBody,
-            termGroups: [[term]]
+            termGroups: expression.termGroups,
+            matchMode: expression.matchMode
           });
           if (!response.ok && response.status !== 404) {
-            throw new Error(`HTTP error ${response.status} for "${term}": ${await response.text()}`);
+            throw new Error(`HTTP error ${response.status} for "${expression.label}": ${await response.text()}`);
           }
-          return { term, response };
-        }));
+          comparisonResponses.push({ term: expression.label, response });
+        }
         const comparisonElapsedMs = Math.round(
           (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
         );
@@ -1603,9 +1561,8 @@ function App() {
           );
           setEstimatedExportTotal(total);
           setStatus(
-            `Sammenligner ${comparisonTerms.length} ord over tid: ${numberFormatter.format(total)} treff totalt ` +
-            `(${comparisonElapsedMs} ms)` +
-            (comparisonLimitationNotice ? ` ${comparisonLimitationNotice}` : '')
+            `Sammenligner ${comparisonExpressions.length} søk over tid: ` +
+            `${numberFormatter.format(total)} treff over seriene (${comparisonElapsedMs} ms)`
           );
           setLastConcordanceRows([]);
           setLastRenderContext(null);
@@ -1613,13 +1570,16 @@ function App() {
           setTrendQuery(trimmedQuery);
           setTrendComparisonSeries(series);
           setTrendComparisonHover(null);
-          setTrendComparisonNotice(comparisonLimitationNotice);
+          setTrendComparisonNotice('');
           setResults(null);
           setDebugInfo({
             endpoint: endpointPath,
             queryMode: 'comparison-year-count',
             resultMode: activeResultMode,
-            comparisonTerms,
+            comparisonExpressions: comparisonExpressions.map((expression) => ({
+              label: expression.label,
+              termGroups: expression.termGroups
+            })),
             series: series.map((item) => ({ term: item.term, years: item.rows.length })),
             total,
             responseMs: comparisonElapsedMs,
@@ -1641,33 +1601,30 @@ function App() {
         const total = counts.reduce((sum, item) => sum + item.total, 0);
         setEstimatedExportTotal(total);
         setStatus(
-          `Telte ${comparisonTerms.length} ord separat: ${numberFormatter.format(total)} treff totalt ` +
-          `(${comparisonElapsedMs} ms)` +
-          (comparisonLimitationNotice ? ` ${comparisonLimitationNotice}` : '')
+          `Telte ${comparisonExpressions.length} søk separat: ` +
+          `${numberFormatter.format(total)} treff over søkene (${comparisonElapsedMs} ms)`
         );
         setLastConcordanceRows([]);
         setLastRenderContext(null);
         setResults(
-          <>
-            {comparisonLimitationNotice
-              ? <p className="result-explanation"><strong>Merk:</strong> {comparisonLimitationNotice}</p>
-              : null}
-            <div className="comparison-count-grid">
-              {counts.map((item) => (
-                <div className="year-count-card" key={`count-${item.term}`}>
-                  <strong>{item.term}</strong>
-                  <span>{numberFormatter.format(item.total)} treff</span>
-                  <small>{numberFormatter.format(item.docs)} dokumenter</small>
-                </div>
-              ))}
-            </div>
-          </>
+          <div className="comparison-count-grid">
+            {counts.map((item) => (
+              <div className="year-count-card" key={`count-${item.term}`}>
+                <strong>{item.term}</strong>
+                <span>{numberFormatter.format(item.total)} treff</span>
+                <small>{numberFormatter.format(item.docs)} dokumenter</small>
+              </div>
+            ))}
+          </div>
         );
         setDebugInfo({
           endpoint: endpointPath,
           queryMode: 'comparison-count',
           resultMode: activeResultMode,
-          comparisonTerms,
+          comparisonExpressions: comparisonExpressions.map((expression) => ({
+            label: expression.label,
+            termGroups: expression.termGroups
+          })),
           counts,
           total,
           responseMs: comparisonElapsedMs,
@@ -2758,7 +2715,14 @@ function App() {
           <Paragraph><strong>Vanlig søk:</strong> <code>norge</code> eller <code>norge sverige</code>.</Paragraph>
           <Paragraph><strong>Frase:</strong> <code>&quot;norge i krig&quot;</code> krever samme rekkefølge.</Paragraph>
           <Paragraph><strong>Wildcard:</strong> <code>elskov*</code> finner flere bøyninger og skrivemåter.</Paragraph>
-          <Paragraph><strong>Termgrupper:</strong> <code>[elskov, kjærlighed] kvinne</code> bruker OR inni gruppen og AND mellom grupper.</Paragraph>
+          <Paragraph>
+            <strong>OR-gruppe:</strong> <code>[elskov, kjærlighed] kvinne</code> er ett søk:
+            elskov eller kjærlighed nær kvinne. Det gir én samlet telling eller trend.
+          </Paragraph>
+          <Paragraph>
+            <strong>Sammenligning:</strong> <code>{'{elskov kvinne; kjærlighed kvinne}'}</code> gir separate
+            tellinger eller trendlinjer for de komplette søkene. Bruk semikolon mellom søkene.
+          </Paragraph>
           <Paragraph><strong>Sted:</strong> <code>#geo krig</code>, <code>#geo:&quot;Rio de Janeiro&quot;</code> eller <code>#geo:1032414</code>.</Paragraph>
           <Paragraph><strong>Eksport:</strong> komplett CSV krever høyst {FULL_EXPORT_LIMIT.toLocaleString('nb-NO')} treff.</Paragraph>
           <Button
