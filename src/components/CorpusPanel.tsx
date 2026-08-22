@@ -71,6 +71,9 @@ export function CorpusPanel({
       <Button type="button" variant="secondary" onClick={onUpload}>
         Last opp korpusfil
       </Button>
+      <Paragraph data-size="xs">
+        CSV- eller Excel-filen må ha en kolonne med URN, dhlabid eller id. URN-er kobles automatisk til DHlab.
+      </Paragraph>
 
       <section className="filter-section">
         <Textfield

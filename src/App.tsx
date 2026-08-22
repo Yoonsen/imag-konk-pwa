@@ -35,6 +35,11 @@ import {
   type ConcordanceExportRow
 } from './lib/csvExport';
 import {
+  normalizeUrn,
+  resolveDhlabMetadata,
+  resolveDhlabMetadataByIds
+} from './lib/dhlabMetadata';
+import {
   formatTrendValue,
   relativeFrequencyUnit,
   scaleComparisonTrendSeries,
@@ -2135,45 +2140,80 @@ function App() {
 
       const sheet = workbook.Sheets[firstSheetName];
       const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      const normalizedRows = rows.map((row) => Object.fromEntries(
+        Object.entries(row).map(([key, value]) => [key.toLowerCase().trim(), value])
+      ));
+      const uploadedId = (row: Record<string, unknown>) => {
+        const value = row.id ?? row.dhlabid ?? row.bookid;
+        if (value === null || value === undefined || value === '') return Number.NaN;
+        return Number(value);
+      };
+      const urnsWithoutIds = normalizedRows
+        .filter((row) => !Number.isFinite(uploadedId(row)))
+        .map((row) => String(row.urn ?? '').trim())
+        .filter(Boolean);
+      const idsWithoutLocalMetadata = normalizedRows
+        .map(uploadedId)
+        .filter((id) => Number.isFinite(id) && !baseMetadataByIdRef.current.has(id));
 
-      const parsedMetadata = rows
-        .map((row) => {
-          const lowerCasedRow = Object.fromEntries(
-            Object.entries(row).map(([key, value]) => [key.toLowerCase().trim(), value])
-          );
-
-          const rawId = lowerCasedRow.id ?? lowerCasedRow.dhlabid ?? lowerCasedRow.bookid;
-          const rawUrn = lowerCasedRow.urn;
-
-          const id = Number(rawId);
-          const urn = String(rawUrn ?? '').trim();
-          const yearValue = lowerCasedRow.year;
-
-          return {
-            id,
-            urn,
-            title: String(lowerCasedRow.title ?? '').trim() || undefined,
-            author: String(lowerCasedRow.author ?? '').trim() || undefined,
-            category: String(lowerCasedRow.category ?? '').trim() || undefined,
-            year: yearValue === '' ? undefined : (yearValue as number | string)
-          } as Metadata;
-        })
-        .filter((item) => Number.isFinite(item.id))
-        .map((item) => {
-          const base = baseMetadataByIdRef.current.get(item.id);
-          return {
-            ...item,
-            urn: item.urn || base?.urn || '',
-            title: item.title || base?.title,
-            author: item.author || base?.author,
-            category: item.category || base?.category,
-            year: item.year ?? base?.year
-          } as Metadata;
+      let resolvedByUrn = new Map<string, Awaited<ReturnType<typeof resolveDhlabMetadata>>[number]>();
+      if (urnsWithoutIds.length > 0) {
+        setStatus(`Slår opp ${new Set(urnsWithoutIds.map(normalizeUrn)).size} URN-er i DHlab …`);
+        const resolved = await resolveDhlabMetadata(urnsWithoutIds, (completed, total) => {
+          setStatus(`Slår opp URN-er i DHlab: ${completed} av ${total} …`);
         });
+        resolvedByUrn = new Map(
+          resolved.map((item) => [normalizeUrn(item.urn), item])
+        );
+      }
+      let resolvedById = new Map<number, Awaited<ReturnType<typeof resolveDhlabMetadataByIds>>[number]>();
+      if (idsWithoutLocalMetadata.length > 0) {
+        setStatus(`Henter metadata for ${new Set(idsWithoutLocalMetadata).size} DHlab-ID-er …`);
+        const resolved = await resolveDhlabMetadataByIds(idsWithoutLocalMetadata, (completed, total) => {
+          setStatus(`Henter metadata fra DHlab: ${completed} av ${total} …`);
+        });
+        resolvedById = new Map(resolved.map((item) => [item.dhlabid, item]));
+      }
+
+      const parsedMetadata = Array.from(new Map(
+        normalizedRows
+          .map((row): Metadata | null => {
+            const directId = uploadedId(row);
+            const rawUrn = String(row.urn ?? '').trim();
+            const resolved = Number.isFinite(directId)
+              ? resolvedById.get(directId)
+              : resolvedByUrn.get(normalizeUrn(rawUrn));
+            const id = Number.isFinite(directId) ? directId : Number(resolved?.dhlabid);
+            if (!Number.isFinite(id)) return null;
+
+            const base = baseMetadataByIdRef.current.get(id);
+            const yearValue = row.year;
+            return {
+              id,
+              urn: resolved?.urn || rawUrn || base?.urn || '',
+              title: String(row.title ?? '').trim() || resolved?.title || base?.title,
+              author: String(row.author ?? row.authors ?? '').trim() || resolved?.author || base?.author,
+              category: String(row.category ?? row.literaryform ?? '').trim()
+                || resolved?.category
+                || base?.category,
+              year: yearValue === '' || yearValue === undefined
+                ? resolved?.year ?? base?.year
+                : yearValue as number | string
+            };
+          })
+          .filter((item): item is Metadata => item !== null)
+          .map((item) => [item.id, item] as const)
+      ).values());
 
       if (parsedMetadata.length === 0) {
-        throw new Error('No valid corpus rows found. Expected at least id/dhlabid (urn is optional).');
+        throw new Error('Ingen gyldige korpusrader funnet. Forventet id/dhlabid eller URN.');
       }
+
+      const unresolvedUrnCount = new Set(
+        urnsWithoutIds
+          .map(normalizeUrn)
+          .filter((urn) => !resolvedByUrn.has(urn))
+      ).size;
 
       const authors = Array.from(
         new Set(
@@ -2197,7 +2237,10 @@ function App() {
       setTrendHoverRow(null);
       setDebugRequest(null);
       setDebugInfo(null);
-      setStatus(`Loaded metadata for ${parsedMetadata.length} documents from "${file.name}".`);
+      setStatus(
+        `Lastet metadata for ${parsedMetadata.length} dokumenter fra «${file.name}».`
+        + (unresolvedUrnCount > 0 ? ` ${unresolvedUrnCount} URN-er ble ikke funnet.` : '')
+      );
     } catch (error) {
       setStatus(`Error loading corpus file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
