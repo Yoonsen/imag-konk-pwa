@@ -49,9 +49,12 @@ import { SearchPanel, SearchSettingsPanel } from './SearchPanel';
 const baseSearchProps = {
   query: 'demokrati',
   resultMode: 'render' as const,
+  comparisonOptions: [] as string[],
+  selectedComparisonIndex: 0,
   isLoading: false,
   onQueryChange: vi.fn(),
   onResultModeChange: vi.fn(),
+  onComparisonChange: vi.fn(),
   onSearch: vi.fn()
 };
 
@@ -130,5 +133,34 @@ describe('SearchPanel', () => {
     render(<SearchPanel {...baseSearchProps} onResultModeChange={onResultModeChange} />);
     fireEvent.change(screen.getByRole('combobox'), { target: { value: 'count' } });
     expect(onResultModeChange).toHaveBeenCalledWith('count');
+  });
+
+  it('shows comparison choices after mode and reports the selected concordance query', () => {
+    const onComparisonChange = vi.fn();
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        comparisonOptions={['a', 'b']}
+        onComparisonChange={onComparisonChange}
+      />
+    );
+
+    const selects = screen.getAllByRole('combobox');
+    expect(selects).toHaveLength(2);
+    expect(screen.getByText('Aktivt søk')).toBeInTheDocument();
+    fireEvent.change(selects[1], { target: { value: '1' } });
+    expect(onComparisonChange).toHaveBeenCalledWith(1);
+  });
+
+  it('hides comparison choices outside concordance mode', () => {
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        resultMode="count"
+        comparisonOptions={['a', 'b']}
+      />
+    );
+    expect(screen.getAllByRole('combobox')).toHaveLength(1);
+    expect(screen.queryByText('Aktivt søk')).not.toBeInTheDocument();
   });
 });

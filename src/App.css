@@ -249,12 +249,17 @@ code {
   box-shadow: var(--app-shadow-soft);
 }
 
+.search-bar--with-comparison {
+  grid-template-columns: minmax(300px, 1fr) minmax(140px, 190px) minmax(150px, 220px);
+}
+
 .search-bar input,
 .search-bar select {
   border-radius: 0.65rem;
 }
 
-.result-mode-field label {
+.result-mode-field label,
+.comparison-expression-field label {
   font-size: 0.78rem;
 }
 

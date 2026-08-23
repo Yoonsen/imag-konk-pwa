@@ -14,6 +14,14 @@ describe('search syntax', () => {
     ]);
   });
 
+  it('accepts one expression with or without a trailing semicolon', () => {
+    const expected = [
+      { label: 'a', termGroups: [['a']], matchMode: 'near' as const }
+    ];
+    expect(parseComparisonExpressions('{a}')).toEqual(expected);
+    expect(parseComparisonExpressions('{a;}')).toEqual(expected);
+  });
+
   it('allows OR groups inside each compared expression', () => {
     expect(parseComparisonExpressions('{[x,y] z; [a,b] z}')).toEqual([
       { label: '[x,y] z', termGroups: [['x', 'y'], ['z']], matchMode: 'near' },
@@ -21,8 +29,8 @@ describe('search syntax', () => {
     ]);
   });
 
-  it('requires braces, semicolons and balanced groups', () => {
-    expect(() => parseComparisonExpressions('{x z}')).toThrow(/minst to søk/);
+  it('requires content, matching braces and balanced groups', () => {
+    expect(() => parseComparisonExpressions('{}')).toThrow(/minst ett søk/);
     expect(() => parseComparisonExpressions('{[x,y z; a z}')).toThrow(/hakeparenteser/);
     expect(() => parseComparisonExpressions('{x z; y z')).toThrow(/omsluttes/);
   });

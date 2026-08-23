@@ -149,6 +149,7 @@ interface SearchOverrides {
   query?: string;
   resultMode?: ResultMode;
   yearRange?: [number, number];
+  comparisonIndex?: number;
 }
 
 interface ModalData {
@@ -201,7 +202,7 @@ function buildYearCountResults(
   onPointActivate?: (row: YearCountRow) => void,
   onPointDismiss?: () => void,
   scaleMode: TrendScaleMode = 'absolute',
-  smoothingMode: TrendSmoothingMode = 'annual',
+  smoothingMode: TrendSmoothingMode = 'five-year',
   showPoints = true
 ): React.ReactNode {
   const rows = yearRows
@@ -753,6 +754,7 @@ function App() {
   const [totalLimit, setTotalLimit] = useState<number>(200);
   const [maxVariants, setMaxVariants] = useState<number>(10);
   const [resultMode, setResultMode] = useState<ResultMode>('render');
+  const [selectedComparisonIndex, setSelectedComparisonIndex] = useState(0);
   const [termGroupsInput, setTermGroupsInput] = useState<string>('');
   const [isSymmetric, setIsSymmetric] = useState<boolean>(true);
   const [status, setStatus] = useState('Loading corpus data...');
@@ -770,7 +772,7 @@ function App() {
   const [trendComparisonHover, setTrendComparisonHover] = useState<TrendComparisonHover | null>(null);
   const [trendComparisonNotice, setTrendComparisonNotice] = useState('');
   const [trendScaleMode, setTrendScaleMode] = useState<TrendScaleMode>('absolute');
-  const [trendSmoothingMode, setTrendSmoothingMode] = useState<TrendSmoothingMode>('annual');
+  const [trendSmoothingMode, setTrendSmoothingMode] = useState<TrendSmoothingMode>('five-year');
   const [showTrendPoints, setShowTrendPoints] = useState(true);
   const [corpusTokenStats, setCorpusTokenStats] = useState<CorpusTokenStatsResponse | null>(null);
   const [tokenStatsStatus, setTokenStatsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
@@ -1172,6 +1174,7 @@ function App() {
     let trimmedQuery = (overrides.query ?? query).trim();
     const activeResultMode = overrides.resultMode ?? resultMode;
     const activeYearRange = overrides.yearRange ?? yearRange;
+    const requestedComparisonIndex = overrides.comparisonIndex ?? selectedComparisonIndex;
 
     if (/^:debug\s+on$/i.test(trimmedQuery)) {
       setDebugEnabled(true);
@@ -1313,13 +1316,11 @@ function App() {
         setResults(<p key="comparison-format-error" className="error">Kontroller krøllparenteser og semikolon.</p>);
         return;
       }
-      if (comparisonExpressions && activeResultMode === 'render') {
-        setStatus('Sammenligning med {…; …} er foreløpig tilgjengelig i Telling og Trend.');
-        setResults(<p key="comparison-render-notice">Velg Telling eller Trend for å sammenligne komplette søk.</p>);
-        return;
-      }
-
-      const primaryComparison = comparisonExpressions?.[0];
+      const primaryComparison = comparisonExpressions?.[
+        activeResultMode === 'render'
+          ? Math.min(Math.max(requestedComparisonIndex, 0), comparisonExpressions.length - 1)
+          : 0
+      ];
       const queryForParsing = primaryComparison?.label ?? trimmedQuery;
       const hasQuotedPhrase = primaryComparison?.matchMode === 'sequence' || /^"[^"]+"$/.test(queryForParsing);
       const normalizedQuery = hasQuotedPhrase ? queryForParsing.slice(1, -1).trim() : queryForParsing;
@@ -1350,7 +1351,11 @@ function App() {
         return;
       }
 
-      if (comparisonExpressions && comparisonExpressions.length > MAX_COMPARISON_TERMS) {
+      if (
+        comparisonExpressions
+        && activeResultMode !== 'render'
+        && comparisonExpressions.length > MAX_COMPARISON_TERMS
+      ) {
         setStatus(`Du kan sammenligne opptil ${MAX_COMPARISON_TERMS} søk om gangen.`);
         setResults(<p key="too-many-comparison-terms">Reduser antall uttrykk mellom krøllparentesene.</p>);
         return;
@@ -1526,7 +1531,7 @@ function App() {
       let activeGeoToken = geoQuery.terms?.[0] ?? null;
       let geoFallbackApplied = false;
 
-      if (comparisonExpressions && endpointPath === 'near_query') {
+      if (comparisonExpressions && activeResultMode !== 'render' && endpointPath === 'near_query') {
         const comparisonResponses: Array<{
           term: string;
           response: Response;
@@ -1877,10 +1882,39 @@ function App() {
     }
   };
 
+  let comparisonOptions: string[] = [];
+  try {
+    comparisonOptions = parseComparisonExpressions(query)?.map((expression) => expression.label) ?? [];
+  } catch {
+    comparisonOptions = [];
+  }
+  const activeComparisonIndex = comparisonOptions.length === 0
+    ? 0
+    : Math.min(selectedComparisonIndex, comparisonOptions.length - 1);
+
+  const handleQueryChange = (nextQuery: string) => {
+    setQuery(nextQuery);
+    setSelectedComparisonIndex(0);
+  };
+
   const handleResultModeChange = (nextMode: ResultMode) => {
     setResultMode(nextMode);
+    const nextComparisonIndex = nextMode === 'render' ? 0 : selectedComparisonIndex;
+    if (nextMode === 'render') {
+      setSelectedComparisonIndex(0);
+    }
     if (query.trim()) {
-      void performSearch({ resultMode: nextMode });
+      void performSearch({
+        resultMode: nextMode,
+        comparisonIndex: nextComparisonIndex
+      });
+    }
+  };
+
+  const handleComparisonChange = (nextIndex: number) => {
+    setSelectedComparisonIndex(nextIndex);
+    if (query.trim()) {
+      void performSearch({ comparisonIndex: nextIndex });
     }
   };
 
@@ -2788,9 +2822,12 @@ function App() {
           <SearchPanel
             query={query}
             resultMode={resultMode}
+            comparisonOptions={comparisonOptions}
+            selectedComparisonIndex={activeComparisonIndex}
             isLoading={isLoading}
-            onQueryChange={setQuery}
+            onQueryChange={handleQueryChange}
             onResultModeChange={handleResultModeChange}
+            onComparisonChange={handleComparisonChange}
             onSearch={() => { void performSearch(); }}
           />
 

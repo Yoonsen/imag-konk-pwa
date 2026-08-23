@@ -107,8 +107,8 @@ export function parseComparisonExpressions(rawInput: string): ComparisonExpressi
   }
 
   const expressions = splitComparisonBody(trimmed.slice(1, -1));
-  if (expressions.length < 2) {
-    throw new Error('En sammenligning må inneholde minst to søk, skilt med semikolon.');
+  if (expressions.length === 0) {
+    throw new Error('Krøllparentesene må inneholde minst ett søk.');
   }
 
   return expressions.map((label) => {

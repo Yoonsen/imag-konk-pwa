@@ -21,23 +21,31 @@ import {
 interface SearchPanelProps {
   query: string;
   resultMode: ResultMode;
+  comparisonOptions: string[];
+  selectedComparisonIndex: number;
   isLoading: boolean;
   onQueryChange: (value: string) => void;
   onResultModeChange: (value: ResultMode) => void;
+  onComparisonChange: (index: number) => void;
   onSearch: () => void;
 }
 
 export function SearchPanel({
   query,
   resultMode,
+  comparisonOptions,
+  selectedComparisonIndex,
   isLoading,
   onQueryChange,
   onResultModeChange,
+  onComparisonChange,
   onSearch
 }: SearchPanelProps) {
+  const showComparisonPicker = resultMode === 'render' && comparisonOptions.length > 1;
+
   return (
     <form
-      className="search-bar"
+      className={`search-bar${showComparisonPicker ? ' search-bar--with-comparison' : ''}`}
       onSubmit={(event) => {
         event.preventDefault();
         onSearch();
@@ -67,6 +75,23 @@ export function SearchPanel({
           <SelectOption value="year-count">Trend</SelectOption>
         </Select>
       </Field>
+
+      {showComparisonPicker ? (
+        <Field className="comparison-expression-field">
+          <Label>Aktivt søk</Label>
+          <Select
+            aria-label="Aktivt søk"
+            value={String(selectedComparisonIndex)}
+            onChange={(event) => onComparisonChange(Number(event.target.value))}
+          >
+            {comparisonOptions.map((option, index) => (
+              <SelectOption key={`${index}-${option}`} value={String(index)}>
+                {option}
+              </SelectOption>
+            ))}
+          </Select>
+        </Field>
+      ) : null}
     </form>
   );
 }
