@@ -437,7 +437,9 @@ function buildComparisonYearCountResults(
   scaleMode: TrendScaleMode,
   smoothingMode: TrendSmoothingMode,
   showPoints: boolean,
-  limitationNotice?: string
+  limitationNotice?: string,
+  hiddenTerms: ReadonlySet<string> = new Set(),
+  onToggleTerm?: (term: string) => void
 ): React.ReactNode {
   const normalizedSeries = comparisonSeries.map((series, index) => ({
     ...series,
@@ -462,9 +464,15 @@ function buildComparisonYearCountResults(
       }))
       .sort((a, b) => a.year - b.year)
   }));
+  const visibleSeries = normalizedSeries.filter((series) => !hiddenTerms.has(series.term));
+  const visibleLineSeries = normalizedLineSeries.filter((series) => !hiddenTerms.has(series.term));
   const allRows = [
     ...normalizedSeries.flatMap((series) => series.rows),
     ...normalizedLineSeries.flatMap((series) => series.rows)
+  ];
+  const visibleRows = [
+    ...visibleSeries.flatMap((series) => series.rows),
+    ...visibleLineSeries.flatMap((series) => series.rows)
   ];
 
   if (allRows.length === 0) {
@@ -478,8 +486,10 @@ function buildComparisonYearCountResults(
   const plotHeight = height - padding.top - padding.bottom;
   const minYear = Math.min(...allRows.map((row) => row.year));
   const maxYear = Math.max(...allRows.map((row) => row.year));
-  const maxTotal = Math.max(...allRows.map((row) => row.total), 1);
-  const relativeUnit = relativeFrequencyUnit(allRows.map((row) => row.total));
+  const maxTotal = Math.max(...visibleRows.map((row) => row.total), 1);
+  const relativeUnit = relativeFrequencyUnit(
+    (visibleRows.length > 0 ? visibleRows : allRows).map((row) => row.total)
+  );
   const formatValue = (value: number) => formatTrendValue(value, scaleMode, relativeUnit);
   const xForYear = (year: number) => minYear === maxYear
     ? padding.left + plotWidth / 2
@@ -498,13 +508,22 @@ function buildComparisonYearCountResults(
         <div className="year-count-note"><strong>Merk:</strong> {limitationNotice}</div>
       ) : null}
 
-      <div className="year-count-legend" aria-label="Trendlinjer">
-        {normalizedSeries.map((series) => (
-          <span key={`legend-${series.term}`}>
-            <i style={{ backgroundColor: series.color }} aria-hidden="true" />
-            {series.term}
-          </span>
-        ))}
+      <div className="year-count-legend" aria-label="Trendlinjer. Klikk for å vise eller skjule en kurve.">
+        {normalizedSeries.map((series) => {
+          const isHidden = hiddenTerms.has(series.term);
+          return (
+            <button
+              key={`legend-${series.term}`}
+              type="button"
+              className={isHidden ? 'year-count-legend__item year-count-legend__item--off' : 'year-count-legend__item'}
+              aria-pressed={!isHidden}
+              onClick={() => onToggleTerm?.(series.term)}
+            >
+              <i style={{ backgroundColor: series.color }} aria-hidden="true" />
+              {series.term}
+            </button>
+          );
+        })}
       </div>
 
       <div className="year-count-chart">
@@ -538,7 +557,7 @@ function buildComparisonYearCountResults(
             stroke="#adb5bd"
             strokeWidth="1"
           />
-          {normalizedSeries.map((series) => {
+          {visibleSeries.map((series) => {
             const points = series.rows.map((row) => ({
               ...row,
               x: xForYear(row.year),
@@ -598,7 +617,7 @@ function buildComparisonYearCountResults(
       </div>
 
       <div className="year-count-summary">
-        {normalizedSeries.map((series) => {
+        {visibleSeries.map((series) => {
           const total = series.rows.reduce((sum, row) => sum + row.total, 0);
           const summaryValue = scaleMode === 'absolute' ? total : total / Math.max(series.rows.length, 1);
           const peak = series.rows.reduce<typeof series.rows[number] | null>(
@@ -615,7 +634,7 @@ function buildComparisonYearCountResults(
         })}
       </div>
 
-      {activePoint ? (
+      {activePoint && !hiddenTerms.has(activePoint.term) ? (
         <Dialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
           <DialogBlock>
             <Heading level={2} data-size="sm">{activePoint.term}, {activePoint.row.year}</Heading>
@@ -778,6 +797,7 @@ function App() {
   const [trendComparisonSeries, setTrendComparisonSeries] = useState<TrendComparisonSeries[] | null>(null);
   const [trendComparisonHover, setTrendComparisonHover] = useState<TrendComparisonHover | null>(null);
   const [trendComparisonNotice, setTrendComparisonNotice] = useState('');
+  const [hiddenTrendTerms, setHiddenTrendTerms] = useState<string[]>([]);
   const [trendScaleMode, setTrendScaleMode] = useState<TrendScaleMode>('absolute');
   const [trendSmoothingMode, setTrendSmoothingMode] = useState<TrendSmoothingMode>('five-year');
   const [showTrendPoints, setShowTrendPoints] = useState(true);
@@ -808,6 +828,7 @@ function App() {
   const exportPanelButtonRef = useRef<HTMLButtonElement>(null);
   const helpPanelButtonRef = useRef<HTMLButtonElement>(null);
   const baseMetadataByIdRef = useRef<Map<number, Metadata>>(new Map());
+  const baseMetadataArrayRef = useRef<Metadata[]>([]);
   const exportAbortControllerRef = useRef<AbortController | null>(null);
   const panelButtonRefs = {
     corpus: corpusPanelButtonRef,
@@ -1068,6 +1089,7 @@ function App() {
           baseMetadataByIdRef.current = new Map(
             baseMetadata.map((item) => [Number(item.id), item])
           );
+          baseMetadataArrayRef.current = sanitizedData.dhlabids;
           setMetadataArray(sanitizedData.dhlabids);
           setPersistentFilterIds(null);
           setSelectedAuthors([]);
@@ -1218,6 +1240,7 @@ function App() {
     setTrendComparisonSeries(null);
     setTrendComparisonHover(null);
     setTrendComparisonNotice('');
+    setHiddenTrendTerms([]);
 
     try {
       const geoResolverInput = parseResolvableGeoInput(trimmedQuery);
@@ -1588,6 +1611,7 @@ function App() {
           setTrendComparisonSeries(series);
           setTrendComparisonHover(null);
           setTrendComparisonNotice('');
+          setHiddenTrendTerms([]);
           setResults(null);
           setDebugInfo({
             endpoint: endpointPath,
@@ -2155,6 +2179,45 @@ function App() {
     fileInputRef.current?.click();
   };
 
+  const restoreBaseCorpus = (statusMessage: string) => {
+    const baseMetadata = baseMetadataArrayRef.current;
+    if (baseMetadata.length === 0) {
+      setStatus('Kunne ikke hente tilbake ImagiNation-korpuset.');
+      return;
+    }
+
+    const authors = Array.from(new Set(
+      baseMetadata
+        .map((item) => item.author)
+        .filter((author): author is string => !!author)
+    )).sort();
+
+    setMetadataArray(baseMetadata);
+    setPersistentFilterIds(null);
+    setUniqueAuthors(authors);
+    setSelectedAuthors([]);
+    setAuthorSearch('');
+    setSelectedCategories(['All Categories']);
+    setYearRange([MIN_YEAR, MAX_YEAR]);
+    setResults(null);
+    setLastConcordanceRows([]);
+    setTrendRows(null);
+    setTrendQuery('');
+    setTrendHoverRow(null);
+    setTrendComparisonSeries(null);
+    setTrendComparisonHover(null);
+    setHiddenTrendTerms([]);
+    setDebugRequest(null);
+    setDebugInfo(null);
+    setStatus(statusMessage);
+  };
+
+  const handleClearUploadedCorpus = () => {
+    restoreBaseCorpus(
+      `Tilbake til ImagiNation-korpuset (${baseMetadataArrayRef.current.length} dokumenter).`
+    );
+  };
+
   const handleCorpusFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -2508,10 +2571,12 @@ function App() {
         `trend-${safeFilenamePart(trendQuery || query)}-${dateStamp}.jpg`,
         {
           title: `${trendQuery || query} – ${scaleLabel}, ${smoothingLabel}`,
-          legend: trendComparisonSeries?.map((series, index) => ({
-            label: series.term,
-            color: TREND_COLORS[index % TREND_COLORS.length]
-          }))
+          legend: trendComparisonSeries
+            ?.map((series, index) => ({
+              label: series.term,
+              color: TREND_COLORS[index % TREND_COLORS.length]
+            }))
+            .filter((item) => !hiddenTrendTerms.includes(item.label))
         }
       );
       setExportStatus('Trendgrafen er lastet ned som JPG.');
@@ -2677,6 +2742,7 @@ function App() {
       return (
         <CorpusPanel
           sourceLabel={sourceLabel}
+          hasUploadedCorpus={persistentFilterIds !== null}
           selectedDocuments={activeCorpus.filteredMetadata.length}
           totalDocuments={metadataArray.length}
           selectedAuthors={selectedAuthors}
@@ -2699,6 +2765,7 @@ function App() {
             setYearRange([MIN_YEAR, MAX_YEAR]);
           }}
           onUpload={handleCorpusUploadClick}
+          onClearUpload={handleClearUploadedCorpus}
         />
       );
     }
@@ -2880,7 +2947,18 @@ function App() {
                     trendScaleMode,
                     trendSmoothingMode,
                     showTrendPoints,
-                    trendComparisonNotice
+                    trendComparisonNotice,
+                    new Set(hiddenTrendTerms),
+                    (term) => {
+                      setHiddenTrendTerms((current) => (
+                        current.includes(term)
+                          ? current.filter((item) => item !== term)
+                          : [...current, term]
+                      ));
+                      setTrendComparisonHover((current) => (
+                        current?.term === term ? null : current
+                      ));
+                    }
                   )}
                 </div>
               </>

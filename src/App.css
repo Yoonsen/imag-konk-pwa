@@ -780,10 +780,26 @@ code {
   font-size: 0.88rem;
 }
 
-.year-count-legend span {
+.year-count-legend__item {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  padding: 0.1rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.year-count-legend__item:hover,
+.year-count-legend__item:focus-visible {
+  color: var(--app-ink);
+}
+
+.year-count-legend__item--off {
+  opacity: 0.45;
+  text-decoration: line-through;
 }
 
 .year-count-legend i {

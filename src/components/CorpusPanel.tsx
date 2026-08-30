@@ -2,6 +2,7 @@ import { Button, Checkbox, Paragraph, Tag, Textfield } from '@digdir/designsyste
 
 interface CorpusPanelProps {
   sourceLabel: string;
+  hasUploadedCorpus: boolean;
   selectedDocuments: number;
   totalDocuments: number;
   selectedAuthors: string[];
@@ -18,10 +19,12 @@ interface CorpusPanelProps {
   onYearChange: (boundary: 'min' | 'max', value: number) => void;
   onReset: () => void;
   onUpload: () => void;
+  onClearUpload: () => void;
 }
 
 export function CorpusPanel({
   sourceLabel,
+  hasUploadedCorpus,
   selectedDocuments,
   totalDocuments,
   selectedAuthors,
@@ -37,7 +40,8 @@ export function CorpusPanel({
   onCategoryToggle,
   onYearChange,
   onReset,
-  onUpload
+  onUpload,
+  onClearUpload
 }: CorpusPanelProps) {
   const selectedCategoryNames = selectedCategories.includes('All Categories')
     ? []
@@ -56,6 +60,7 @@ export function CorpusPanel({
       </div>
 
       <div className="chip-list" aria-label="Aktive korpusfiltre">
+        {hasUploadedCorpus ? <Tag data-color="accent">Opplastet subkorpus</Tag> : null}
         {selectedAuthors.map((author) => (
           <Tag key={`author-${author}`} data-color="accent">{author}</Tag>
         ))}
@@ -63,7 +68,7 @@ export function CorpusPanel({
           <Tag key={`category-${category}`} data-color="brand1">{category}</Tag>
         ))}
         {hasYearFilter ? <Tag data-color="neutral">{yearRange[0]}–{yearRange[1]}</Tag> : null}
-        {selectedAuthors.length === 0 && selectedCategoryNames.length === 0 && !hasYearFilter ? (
+        {!hasUploadedCorpus && selectedAuthors.length === 0 && selectedCategoryNames.length === 0 && !hasYearFilter ? (
           <Tag data-color="neutral">Ingen ekstra filtre</Tag>
         ) : null}
       </div>
@@ -71,6 +76,11 @@ export function CorpusPanel({
       <Button type="button" variant="secondary" onClick={onUpload}>
         Last opp korpusfil
       </Button>
+      {hasUploadedCorpus ? (
+        <Button type="button" variant="secondary" onClick={onClearUpload}>
+          Tilbake til ImagiNation-korpuset
+        </Button>
+      ) : null}
       <Paragraph data-size="xs">
         CSV- eller Excel-filen må ha en kolonne med URN, dhlabid eller id. URN-er kobles automatisk til DHlab.
       </Paragraph>
