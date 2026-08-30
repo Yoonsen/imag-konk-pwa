@@ -32,7 +32,8 @@ import {
   clearSearchHistory,
   importSearchQueries,
   loadSearchHistory,
-  rememberSearchQuery
+  rememberSearchQuery,
+  removeSearchQuery
 } from './lib/searchHistory';
 import {
   parseComparisonExpressions,
@@ -2908,6 +2909,9 @@ function App() {
             onSelectRecentQuery={handleQueryChange}
             onImportQueries={(incoming) => {
               setRecentQueries((current) => importSearchQueries(incoming, current));
+            }}
+            onRemoveRecentQuery={(value) => {
+              setRecentQueries((current) => removeSearchQuery(value, current));
             }}
             onClearRecentQueries={() => setRecentQueries(clearSearchHistory())}
             onSearch={() => { void performSearch(); }}

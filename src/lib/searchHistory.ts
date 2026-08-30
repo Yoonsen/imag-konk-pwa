@@ -75,6 +75,12 @@ export function importSearchQueries(incoming: string[], history: string[]): stri
   return next;
 }
 
+export function removeSearchQuery(query: string, history: string[]): string[] {
+  const next = history.filter((item) => item !== query.trim());
+  saveSearchHistory(next);
+  return next;
+}
+
 export function clearSearchHistory(): string[] {
   saveSearchHistory([]);
   return [];

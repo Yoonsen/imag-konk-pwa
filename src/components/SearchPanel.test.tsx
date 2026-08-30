@@ -58,6 +58,7 @@ const baseSearchProps = {
   onComparisonChange: vi.fn(),
   onSelectRecentQuery: vi.fn(),
   onImportQueries: vi.fn(),
+  onRemoveRecentQuery: vi.fn(),
   onClearRecentQueries: vi.fn(),
   onSearch: vi.fn()
 };
@@ -256,5 +257,27 @@ describe('SearchPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
     fireEvent.click(screen.getByRole('button', { name: 'Tøm' }));
     expect(onClearRecentQueries).toHaveBeenCalledOnce();
+  });
+
+  it('removes one query from the list without searching', () => {
+    const onRemoveRecentQuery = vi.fn();
+    const onSelectRecentQuery = vi.fn();
+    const onSearch = vi.fn();
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        query=""
+        recentQueries={['demokratiet', 'frihet']}
+        onRemoveRecentQuery={onRemoveRecentQuery}
+        onSelectRecentQuery={onSelectRecentQuery}
+        onSearch={onSearch}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Fjern demokratiet' }));
+    expect(onRemoveRecentQuery).toHaveBeenCalledWith('demokratiet');
+    expect(onSelectRecentQuery).not.toHaveBeenCalled();
+    expect(onSearch).not.toHaveBeenCalled();
   });
 });

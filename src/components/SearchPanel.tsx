@@ -32,6 +32,7 @@ interface SearchPanelProps {
   onComparisonChange: (index: number) => void;
   onSelectRecentQuery: (value: string) => void;
   onImportQueries: (queries: string[]) => void;
+  onRemoveRecentQuery: (value: string) => void;
   onClearRecentQueries: () => void;
   onSearch: () => void;
 }
@@ -48,6 +49,7 @@ export function SearchPanel({
   onComparisonChange,
   onSelectRecentQuery,
   onImportQueries,
+  onRemoveRecentQuery,
   onClearRecentQueries,
   onSearch
 }: SearchPanelProps) {
@@ -220,7 +222,7 @@ export function SearchPanel({
                 aria-label="Søkeliste"
               >
                 {visibleHistory.map((item, index) => (
-                  <li key={item} role="presentation">
+                  <li key={item} className="search-history__row" role="presentation">
                     <button
                       id={`${historyListId}-${index}`}
                       type="button"
@@ -235,6 +237,17 @@ export function SearchPanel({
                       onClick={() => selectRecentQuery(item)}
                     >
                       {item}
+                    </button>
+                    <button
+                      type="button"
+                      className="search-history__remove"
+                      aria-label={`Fjern ${item}`}
+                      onClick={() => {
+                        onRemoveRecentQuery(item);
+                        setActiveHistoryIndex(-1);
+                      }}
+                    >
+                      ×
                     </button>
                   </li>
                 ))}

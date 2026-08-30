@@ -7,7 +7,8 @@ import {
   loadSearchHistory,
   matchingSearchHistory,
   parsePastedSearchList,
-  rememberSearchQuery
+  rememberSearchQuery,
+  removeSearchQuery
 } from './searchHistory';
 
 afterEach(() => {
@@ -55,6 +56,12 @@ describe('search history', () => {
     const next = importSearchQueries(['norge', 'frihet'], ['demokrati', 'frihet']);
     expect(next).toEqual(['norge', 'frihet', 'demokrati']);
     expect(formatSearchList(next)).toBe('norge\nfrihet\ndemokrati');
+  });
+
+  it('removes a single query from the persisted list', () => {
+    const history = rememberSearchQuery('frihet', rememberSearchQuery('norge', []));
+    expect(removeSearchQuery('norge', history)).toEqual(['frihet']);
+    expect(loadSearchHistory()).toEqual(['frihet']);
   });
 
   it('clears persisted history', () => {

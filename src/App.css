@@ -304,9 +304,16 @@ code {
   list-style: none;
 }
 
+.search-history__row {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+}
+
 .search-history__item {
+  flex: 1;
+  min-width: 0;
   display: block;
-  width: 100%;
   padding: 0.5rem 0.7rem;
   overflow: hidden;
   border: 0;
@@ -322,6 +329,26 @@ code {
 .search-history__item:hover,
 .search-history__item--active {
   background: var(--app-accent-soft);
+}
+
+.search-history__remove {
+  flex-shrink: 0;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.45rem;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.search-history__remove:hover,
+.search-history__remove:focus-visible {
+  background: var(--app-accent-soft);
+  color: var(--app-ink);
 }
 
 .search-history__empty {
