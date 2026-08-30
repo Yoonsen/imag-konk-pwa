@@ -29,6 +29,12 @@ import {
   type ResultMode
 } from './lib/searchRequests';
 import {
+  clearSearchHistory,
+  importSearchQueries,
+  loadSearchHistory,
+  rememberSearchQuery
+} from './lib/searchHistory';
+import {
   parseComparisonExpressions,
   parseTermGroups,
   toSingleTermGroups
@@ -742,6 +748,7 @@ function App() {
   const [metadataArray, setMetadataArray] = useState<Metadata[]>([]);
   const [uniqueAuthors, setUniqueAuthors] = useState<string[]>([]);
   const [query, setQuery] = useState('');
+  const [recentQueries, setRecentQueries] = useState<string[]>(() => loadSearchHistory());
   const [selectedCategories, setSelectedCategories] = useState<string[]>(['All Categories']);
   const [selectedAuthors, setSelectedAuthors] = useState<string[]>([]);
   const [authorSearch, setAuthorSearch] = useState('');
@@ -1192,6 +1199,8 @@ function App() {
       alert("Please enter a search term");
       return;
     }
+
+    setRecentQueries((current) => rememberSearchQuery(trimmedQuery, current));
 
     if (!metadataArray || metadataArray.length === 0) {
       alert("Metadata not loaded yet. Please try again.");
@@ -2824,10 +2833,16 @@ function App() {
             resultMode={resultMode}
             comparisonOptions={comparisonOptions}
             selectedComparisonIndex={activeComparisonIndex}
+            recentQueries={recentQueries}
             isLoading={isLoading}
             onQueryChange={handleQueryChange}
             onResultModeChange={handleResultModeChange}
             onComparisonChange={handleComparisonChange}
+            onSelectRecentQuery={handleQueryChange}
+            onImportQueries={(incoming) => {
+              setRecentQueries((current) => importSearchQueries(incoming, current));
+            }}
+            onClearRecentQueries={() => setRecentQueries(clearSearchHistory())}
             onSearch={() => { void performSearch(); }}
           />
 

@@ -52,9 +52,13 @@ const baseSearchProps = {
   comparisonOptions: [] as string[],
   selectedComparisonIndex: 0,
   isLoading: false,
+  recentQueries: [] as string[],
   onQueryChange: vi.fn(),
   onResultModeChange: vi.fn(),
   onComparisonChange: vi.fn(),
+  onSelectRecentQuery: vi.fn(),
+  onImportQueries: vi.fn(),
+  onClearRecentQueries: vi.fn(),
   onSearch: vi.fn()
 };
 
@@ -131,7 +135,7 @@ describe('SearchPanel', () => {
   it('reports a changed result mode immediately', () => {
     const onResultModeChange = vi.fn();
     render(<SearchPanel {...baseSearchProps} onResultModeChange={onResultModeChange} />);
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'count' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Resultatvisning' }), { target: { value: 'count' } });
     expect(onResultModeChange).toHaveBeenCalledWith('count');
   });
 
@@ -145,10 +149,9 @@ describe('SearchPanel', () => {
       />
     );
 
-    const selects = screen.getAllByRole('combobox');
-    expect(selects).toHaveLength(2);
+    expect(screen.getByRole('combobox', { name: 'Aktivt søk' })).toBeInTheDocument();
     expect(screen.getByText('Aktivt søk')).toBeInTheDocument();
-    fireEvent.change(selects[1], { target: { value: '1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Aktivt søk' }), { target: { value: '1' } });
     expect(onComparisonChange).toHaveBeenCalledWith(1);
   });
 
@@ -160,7 +163,98 @@ describe('SearchPanel', () => {
         comparisonOptions={['a', 'b']}
       />
     );
-    expect(screen.getAllByRole('combobox')).toHaveLength(1);
-    expect(screen.queryByText('Aktivt søk')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Søkeuttrykk' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Resultatvisning' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Aktivt søk' })).not.toBeInTheDocument();
+  });
+
+  it('opens recent queries on focus and fills the field without searching', () => {
+    const onSelectRecentQuery = vi.fn();
+    const onSearch = vi.fn();
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        query=""
+        recentQueries={['demokratiet', 'frihet gudsdyrkelse']}
+        onSelectRecentQuery={onSelectRecentQuery}
+        onSearch={onSearch}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
+    fireEvent.click(screen.getByRole('option', { name: 'demokratiet' }));
+
+    expect(onSelectRecentQuery).toHaveBeenCalledWith('demokratiet');
+    expect(onSearch).not.toHaveBeenCalled();
+  });
+
+  it('shows the full saved list from Liste even when the field already has a query', () => {
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        query="demokrati"
+        recentQueries={['demokratiet', 'frihet gudsdyrkelse']}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
+    expect(screen.getByRole('option', { name: 'demokratiet' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'frihet gudsdyrkelse' })).toBeInTheDocument();
+  });
+
+  it('copies the stored search list to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        query=""
+        recentQueries={['demokratiet', 'frihet']}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Kopier liste' }));
+    expect(writeText).toHaveBeenCalledWith('demokratiet\nfrihet');
+  });
+
+  it('imports a pasted list of queries without searching', () => {
+    const onImportQueries = vi.fn();
+    const onSearch = vi.fn();
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        query=""
+        recentQueries={[]}
+        onImportQueries={onImportQueries}
+        onSearch={onSearch}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Lim inn liste' }));
+    fireEvent.change(screen.getByLabelText('Lim inn søkeliste'), {
+      target: { value: 'norge\nsverige' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Legg til' }));
+
+    expect(onImportQueries).toHaveBeenCalledWith(['norge', 'sverige']);
+    expect(onSearch).not.toHaveBeenCalled();
+  });
+
+  it('can clear stored search history from the dropdown', () => {
+    const onClearRecentQueries = vi.fn();
+    render(
+      <SearchPanel
+        {...baseSearchProps}
+        query=""
+        recentQueries={['norge']}
+        onClearRecentQueries={onClearRecentQueries}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Liste' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Tøm' }));
+    expect(onClearRecentQueries).toHaveBeenCalledOnce();
   });
 });

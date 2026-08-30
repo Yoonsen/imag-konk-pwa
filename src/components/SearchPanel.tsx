@@ -1,3 +1,4 @@
+import { useId, useMemo, useRef, useState } from 'react';
 import {
   Checkbox,
   Details,
@@ -12,6 +13,7 @@ import {
   SelectOption,
   Textfield
 } from '@digdir/designsystemet-react';
+import { formatSearchList, matchingSearchHistory, parsePastedSearchList } from '../lib/searchHistory';
 import {
   PREVIEW_PROFILES,
   matchingPreviewProfile,
@@ -23,10 +25,14 @@ interface SearchPanelProps {
   resultMode: ResultMode;
   comparisonOptions: string[];
   selectedComparisonIndex: number;
+  recentQueries: string[];
   isLoading: boolean;
   onQueryChange: (value: string) => void;
   onResultModeChange: (value: ResultMode) => void;
   onComparisonChange: (index: number) => void;
+  onSelectRecentQuery: (value: string) => void;
+  onImportQueries: (queries: string[]) => void;
+  onClearRecentQueries: () => void;
   onSearch: () => void;
 }
 
@@ -35,39 +41,276 @@ export function SearchPanel({
   resultMode,
   comparisonOptions,
   selectedComparisonIndex,
+  recentQueries,
   isLoading,
   onQueryChange,
   onResultModeChange,
   onComparisonChange,
+  onSelectRecentQuery,
+  onImportQueries,
+  onClearRecentQueries,
   onSearch
 }: SearchPanelProps) {
   const showComparisonPicker = resultMode === 'render' && comparisonOptions.length > 1;
+  const historyListId = useId();
+  const historyRef = useRef<HTMLDivElement>(null);
+  const queryFieldRef = useRef<HTMLDivElement>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isPasteOpen, setIsPasteOpen] = useState(false);
+  const [isListFiltered, setIsListFiltered] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [activeHistoryIndex, setActiveHistoryIndex] = useState(-1);
+  const visibleHistory = useMemo(
+    () => (isListFiltered ? matchingSearchHistory(recentQueries, query) : recentQueries),
+    [isListFiltered, query, recentQueries]
+  );
+  const historyVisible = isHistoryOpen;
+  const activeHistoryId = historyVisible && activeHistoryIndex >= 0
+    ? `${historyListId}-${activeHistoryIndex}`
+    : undefined;
+
+  const closeHistory = () => {
+    setIsHistoryOpen(false);
+    setIsPasteOpen(false);
+    setIsListFiltered(false);
+    setActiveHistoryIndex(-1);
+  };
+
+  const selectRecentQuery = (value: string) => {
+    onSelectRecentQuery(value);
+    closeHistory();
+  };
+
+  const addPastedQueries = () => {
+    const incoming = parsePastedSearchList(pasteText);
+    if (incoming.length === 0) return;
+    onImportQueries(incoming);
+    setPasteText('');
+    setIsPasteOpen(false);
+  };
+
+  const copySearchList = async () => {
+    const text = formatSearchList(recentQueries);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus('copied');
+    } catch {
+      setCopyStatus('failed');
+    }
+    window.setTimeout(() => setCopyStatus('idle'), 1600);
+  };
+
+  const toggleHistory = () => {
+    setIsHistoryOpen((open) => {
+      if (open) {
+        setIsPasteOpen(false);
+        setIsListFiltered(false);
+        setActiveHistoryIndex(-1);
+      } else {
+        setIsListFiltered(false);
+      }
+      return !open;
+    });
+  };
 
   return (
     <form
       className={`search-bar${showComparisonPicker ? ' search-bar--with-comparison' : ''}`}
       onSubmit={(event) => {
         event.preventDefault();
+        closeHistory();
         onSearch();
       }}
     >
-      <Field className="search-query-field">
-        <Label>Søkeuttrykk</Label>
-        <Search>
-          <SearchInput
-            name="query"
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            aria-label="Søkeuttrykk"
+      <div className="search-query-field" ref={queryFieldRef}>
+        <Field>
+          <div className="search-query-field__header">
+            <Label>Søkeuttrykk</Label>
+            <button
+              type="button"
+              className="search-history-toggle"
+              aria-expanded={historyVisible}
+              aria-controls={historyVisible ? historyListId : undefined}
+              onClick={toggleHistory}
+            >
+              Liste
+            </button>
+          </div>
+          <Search>
+            <SearchInput
+              name="query"
+              value={query}
+              autoComplete="off"
+              role="combobox"
+              aria-label="Søkeuttrykk"
+              aria-autocomplete="list"
+              aria-expanded={historyVisible}
+              aria-controls={visibleHistory.length > 0 ? historyListId : undefined}
+              aria-activedescendant={activeHistoryId}
+              onChange={(event) => {
+                onQueryChange(event.target.value);
+                setIsHistoryOpen(true);
+                setIsListFiltered(true);
+                setActiveHistoryIndex(-1);
+              }}
+              onFocus={() => setIsHistoryOpen(true)}
+              onClick={() => setIsHistoryOpen(true)}
+              onBlur={() => {
+                window.setTimeout(() => {
+                  const active = document.activeElement;
+                  if (queryFieldRef.current?.contains(active)) return;
+                  if (historyRef.current?.contains(active)) return;
+                  closeHistory();
+                }, 0);
+              }}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                if (historyVisible) {
+                  event.preventDefault();
+                  closeHistory();
+                }
+                return;
+              }
+
+              if (visibleHistory.length === 0) return;
+
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setIsHistoryOpen(true);
+                setActiveHistoryIndex((current) => (
+                  current < visibleHistory.length - 1 ? current + 1 : 0
+                ));
+                return;
+              }
+
+              if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setIsHistoryOpen(true);
+                setActiveHistoryIndex((current) => (
+                  current <= 0 ? visibleHistory.length - 1 : current - 1
+                ));
+                return;
+              }
+
+              if (event.key === 'Enter' && historyVisible && activeHistoryIndex >= 0) {
+                event.preventDefault();
+                selectRecentQuery(visibleHistory[activeHistoryIndex]);
+              }
+            }}
           />
           <SearchButton type="submit" loading={isLoading}>Søk</SearchButton>
         </Search>
-      </Field>
+        </Field>
+        {historyVisible ? (
+          <div
+            ref={historyRef}
+            className="search-history"
+            onMouseDown={(event) => {
+              if ((event.target as HTMLElement).closest('textarea')) return;
+              event.preventDefault();
+            }}
+          >
+            {visibleHistory.length > 0 ? (
+              <ul
+                id={historyListId}
+                className="search-history__list"
+                role="listbox"
+                aria-label="Søkeliste"
+              >
+                {visibleHistory.map((item, index) => (
+                  <li key={item} role="presentation">
+                    <button
+                      id={`${historyListId}-${index}`}
+                      type="button"
+                      className={
+                        index === activeHistoryIndex
+                          ? 'search-history__item search-history__item--active'
+                          : 'search-history__item'
+                      }
+                      role="option"
+                      aria-selected={index === activeHistoryIndex}
+                      title={item}
+                      onClick={() => selectRecentQuery(item)}
+                    >
+                      {item}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="search-history__empty">
+                {recentQueries.length === 0
+                  ? 'Ingen søk i listen ennå. Lim inn ett søk per linje.'
+                  : 'Ingen treff i listen.'}
+              </p>
+            )}
+            {isPasteOpen ? (
+              <div className="search-history__paste">
+                <textarea
+                  className="search-history__paste-input"
+                  aria-label="Lim inn søkeliste"
+                  placeholder={'demokrati\nfrihet\n[elskov, kjærlighed] kvinne'}
+                  rows={4}
+                  value={pasteText}
+                  onChange={(event) => setPasteText(event.target.value)}
+                />
+                <div className="search-history__actions">
+                  <button type="button" className="search-history__action" onClick={addPastedQueries}>
+                    Legg til
+                  </button>
+                  <button
+                    type="button"
+                    className="search-history__action"
+                    onClick={() => {
+                      setIsPasteOpen(false);
+                      setPasteText('');
+                    }}
+                  >
+                    Avbryt
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="search-history__actions">
+                <button
+                  type="button"
+                  className="search-history__action"
+                  disabled={recentQueries.length === 0}
+                  onClick={() => { void copySearchList(); }}
+                >
+                  {copyStatus === 'copied' ? 'Kopiert' : copyStatus === 'failed' ? 'Kopiering feilet' : 'Kopier liste'}
+                </button>
+                <button
+                  type="button"
+                  className="search-history__action"
+                  onClick={() => setIsPasteOpen(true)}
+                >
+                  Lim inn liste
+                </button>
+                <button
+                  type="button"
+                  className="search-history__action"
+                  disabled={recentQueries.length === 0}
+                  onClick={() => {
+                    onClearRecentQueries();
+                    closeHistory();
+                  }}
+                >
+                  Tøm
+                </button>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
 
       <Field className="result-mode-field">
         <Label>Resultatvisning</Label>
         <Select
           value={resultMode}
+          aria-label="Resultatvisning"
           onChange={(event) => onResultModeChange(event.target.value as ResultMode)}
         >
           <SelectOption value="render">Konk</SelectOption>

@@ -258,6 +258,128 @@ code {
   border-radius: 0.65rem;
 }
 
+.search-query-field {
+  position: relative;
+}
+
+.search-query-field__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.search-history-toggle {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.search-history-toggle:hover,
+.search-history-toggle:focus-visible {
+  color: var(--app-accent-strong);
+}
+
+.search-history {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  overflow: hidden;
+  border: 1px solid var(--app-line);
+  border-radius: 0.75rem;
+  background: var(--app-paper);
+  box-shadow: var(--app-shadow-soft);
+}
+
+.search-history__list {
+  max-height: 14rem;
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.search-history__item {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.search-history__item:hover,
+.search-history__item--active {
+  background: var(--app-accent-soft);
+}
+
+.search-history__empty {
+  margin: 0;
+  padding: 0.75rem 0.85rem 0.35rem;
+  color: var(--app-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.search-history__paste {
+  padding: 0.45rem 0.55rem 0.65rem;
+  border-top: 1px solid var(--app-line);
+}
+
+.search-history__paste-input {
+  width: 100%;
+  min-height: 5.5rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--app-line);
+  border-radius: 0.55rem;
+  background: var(--app-paper-muted);
+  color: inherit;
+  resize: vertical;
+}
+
+.search-history__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.15rem 0.75rem;
+  padding: 0.35rem 0.55rem 0.55rem;
+  border-top: 1px solid var(--app-line);
+}
+
+.search-history__paste .search-history__actions {
+  padding: 0.45rem 0 0;
+  border-top: 0;
+}
+
+.search-history__action {
+  padding: 0.2rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--app-muted);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.search-history__action:hover,
+.search-history__action:focus-visible {
+  color: var(--app-accent-strong);
+}
+
+.search-history__action:disabled {
+  color: #9aa3a1;
+  cursor: default;
+}
+
 .result-mode-field label,
 .comparison-expression-field label {
   font-size: 0.78rem;
