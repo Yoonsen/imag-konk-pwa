@@ -5,7 +5,8 @@ import {
   scaleComparisonTrendSeries,
   scaleSingleTrendRows,
   smoothComparisonTrendSeries,
-  smoothSingleTrendRows
+  smoothSingleTrendRows,
+  trendAxisValues
 } from './trendScaling';
 
 describe('trend scaling', () => {
@@ -54,6 +55,11 @@ describe('trend scaling', () => {
       '1881': 900
     });
     expect(smoothed[0].total).toBe(100_000);
+  });
+
+  it('drops yearly point peaks from the axis when points are hidden', () => {
+    expect(trendAxisValues([100, 4], [12, 8], true)).toEqual([100, 4, 12, 8]);
+    expect(trendAxisValues([100, 4], [12, 8], false)).toEqual([12, 8]);
   });
 
   it('uses the full rolling cohort as denominator', () => {

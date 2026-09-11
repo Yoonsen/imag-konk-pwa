@@ -131,6 +131,17 @@ export function smoothComparisonTrendSeries<T extends TrendValueRow>(
   }));
 }
 
+export function trendAxisValues(
+  pointValues: number[],
+  lineValues: number[],
+  showPoints: boolean
+): number[] {
+  if (showPoints) {
+    return [...pointValues, ...lineValues];
+  }
+  return lineValues.length > 0 ? lineValues : pointValues;
+}
+
 export function relativeFrequencyUnit(values: number[]): RelativeFrequencyUnit {
   const maxValue = Math.max(...values.filter(Number.isFinite), 0);
   return maxValue >= 10_000 ? 'percent' : 'ppm';

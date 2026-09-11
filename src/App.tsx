@@ -58,6 +58,7 @@ import {
   scaleSingleTrendRows,
   smoothComparisonTrendSeries,
   smoothSingleTrendRows,
+  trendAxisValues,
   type TrendScaleMode,
   type TrendSmoothingMode
 } from './lib/trendScaling';
@@ -244,15 +245,13 @@ function buildYearCountResults(
   const padding = { top: 16, right: 16, bottom: 32, left: 76 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
-  const maxTotal = Math.max(
-    ...rows.map((row) => row.total),
-    ...lineRows.map((row) => row.total),
-    1
+  const axisValues = trendAxisValues(
+    rows.map((row) => row.total),
+    lineRows.map((row) => row.total),
+    showPoints
   );
-  const relativeUnit = relativeFrequencyUnit([
-    ...rows.map((row) => row.total),
-    ...lineRows.map((row) => row.total)
-  ]);
+  const maxTotal = Math.max(...axisValues, 1);
+  const relativeUnit = relativeFrequencyUnit(axisValues);
   const formatValue = (value: number) => formatTrendValue(value, scaleMode, relativeUnit);
   const yTicks = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
     ratio,
@@ -420,8 +419,10 @@ function buildYearCountResults(
         {smoothingMode === 'five-year'
           ? showPoints
             ? ' Linjen er et sentrert femårsvindu; punktene viser faktiske år.'
-            : ' Linjen er et sentrert femårsvindu.'
-          : ''}
+            : ' Linjen er et sentrert femårsvindu, og aksen følger linjen.'
+          : showPoints
+            ? ''
+            : ' Aksen følger linjen.'}
         {onYearSelect && showPoints ? ' Velg et punkt for å åpne konkordanser fra året.' : ''}
       </div>
     </div>
@@ -471,10 +472,8 @@ function buildComparisonYearCountResults(
     ...normalizedSeries.flatMap((series) => series.rows),
     ...normalizedLineSeries.flatMap((series) => series.rows)
   ];
-  const visibleRows = [
-    ...visibleSeries.flatMap((series) => series.rows),
-    ...visibleLineSeries.flatMap((series) => series.rows)
-  ];
+  const visiblePointRows = visibleSeries.flatMap((series) => series.rows);
+  const visibleLineRows = visibleLineSeries.flatMap((series) => series.rows);
 
   if (allRows.length === 0) {
     return <p key="no-comparison-year-results">Ingen årlige tellinger funnet.</p>;
@@ -487,10 +486,13 @@ function buildComparisonYearCountResults(
   const plotHeight = height - padding.top - padding.bottom;
   const minYear = Math.min(...allRows.map((row) => row.year));
   const maxYear = Math.max(...allRows.map((row) => row.year));
-  const maxTotal = Math.max(...visibleRows.map((row) => row.total), 1);
-  const relativeUnit = relativeFrequencyUnit(
-    (visibleRows.length > 0 ? visibleRows : allRows).map((row) => row.total)
+  const axisValues = trendAxisValues(
+    visiblePointRows.map((row) => row.total),
+    visibleLineRows.map((row) => row.total),
+    showPoints
   );
+  const maxTotal = Math.max(...axisValues, 1);
+  const relativeUnit = relativeFrequencyUnit(axisValues.length > 0 ? axisValues : allRows.map((row) => row.total));
   const formatValue = (value: number) => formatTrendValue(value, scaleMode, relativeUnit);
   const xForYear = (year: number) => minYear === maxYear
     ? padding.left + plotWidth / 2
@@ -676,8 +678,10 @@ function buildComparisonYearCountResults(
         {smoothingMode === 'five-year'
           ? showPoints
             ? ' Linjene bruker et sentrert femårsvindu; punktene viser faktiske år.'
-            : ' Linjene bruker et sentrert femårsvindu.'
-          : ''}
+            : ' Linjene bruker et sentrert femårsvindu, og aksen følger linjene.'
+          : showPoints
+            ? ''
+            : ' Aksen følger linjene.'}
         {showPoints ? ' Velg et punkt for å åpne konkordanser for ordet og året.' : ''}
       </div>
     </div>
