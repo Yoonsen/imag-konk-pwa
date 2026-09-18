@@ -2,12 +2,12 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Alert,
   Button,
-  Dialog,
   DialogBlock,
   Heading,
   Paragraph
 } from '@digdir/designsystemet-react';
 import './App.css';
+import { SafeDialog } from './components/SafeDialog';
 import * as XLSX from 'xlsx';
 import DOMPurify from 'dompurify';
 import { CorpusPanel } from './components/CorpusPanel';
@@ -379,7 +379,7 @@ function buildYearCountResults(
       </div>
 
       {activeYear && onYearSelect && onPointDismiss ? (
-        <Dialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
+        <SafeDialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
           <DialogBlock>
             <Heading level={2} data-size="sm">{activeYear.year}</Heading>
             <Paragraph>
@@ -407,7 +407,7 @@ function buildYearCountResults(
               +/- 5 år
             </Button>
           </DialogBlock>
-        </Dialog>
+        </SafeDialog>
       ) : null}
 
       <div className="year-count-note">
@@ -638,7 +638,7 @@ function buildComparisonYearCountResults(
       </div>
 
       {activePoint && !hiddenTerms.has(activePoint.term) ? (
-        <Dialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
+        <SafeDialog open onClose={onPointDismiss} closedby="any" className="trend-point-dialog">
           <DialogBlock>
             <Heading level={2} data-size="sm">{activePoint.term}, {activePoint.row.year}</Heading>
             <Paragraph>
@@ -664,7 +664,7 @@ function buildComparisonYearCountResults(
               +/- 5 år
             </Button>
           </DialogBlock>
-        </Dialog>
+        </SafeDialog>
       ) : null}
 
       <div className="year-count-note">
@@ -3015,7 +3015,7 @@ function App() {
         </div>
       </main>
 
-      <Dialog open={showModal} onClose={() => setShowModal(false)} closedby="any">
+      <SafeDialog id="book-info-dialog" open={showModal} onClose={() => setShowModal(false)} closedby="any">
         <DialogBlock>
           <Heading level={2} data-size="md">{modalData?.title || 'Bokinformasjon'}</Heading>
         </DialogBlock>
@@ -3035,11 +3035,13 @@ function App() {
               </a>
             </Button>
           ) : null}
-          <Button type="button" variant="secondary" onClick={() => setShowModal(false)}>Lukk</Button>
+          <Button type="button" variant="secondary" command="close" commandfor="book-info-dialog">
+            Lukk
+          </Button>
         </DialogBlock>
-      </Dialog>
+      </SafeDialog>
 
-      <Dialog
+      <SafeDialog
         className="wide-dialog"
         open={showTrendConcordanceModal}
         onClose={() => setShowTrendConcordanceModal(false)}
@@ -3064,7 +3066,7 @@ function App() {
             <Paragraph>Laster ...</Paragraph>
           )}
         </DialogBlock>
-      </Dialog>
+      </SafeDialog>
 
     </>
   );
