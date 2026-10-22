@@ -21,6 +21,7 @@ const baseProps = {
   query: 'demokrati',
   selectedDocuments: 1200,
   previewRows: 20,
+  countRows: 1,
   estimatedTotal: 200,
   exportStatus: '',
   isExporting: false,
@@ -28,6 +29,7 @@ const baseProps = {
   onDownloadPreview: vi.fn(),
   onDownloadFull: vi.fn(),
   onDownloadTrendImage: vi.fn(),
+  onDownloadCount: vi.fn(),
   onCancelExport: vi.fn()
 };
 
@@ -42,5 +44,11 @@ describe('ExportPanel', () => {
     render(<ExportPanel {...baseProps} contentType="concordance" />);
     expect(screen.getByRole('button', { name: 'Last ned samplet XLSX' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Last ned komplett CSV' })).toBeEnabled();
+  });
+
+  it('offers a CSV of the visible count results', () => {
+    render(<ExportPanel {...baseProps} contentType="count" />);
+    expect(screen.getByRole('button', { name: 'Last ned telling som CSV' })).toBeEnabled();
+    expect(screen.queryByText('Last ned komplett CSV')).not.toBeInTheDocument();
   });
 });

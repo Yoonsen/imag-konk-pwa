@@ -41,9 +41,11 @@ import {
   toSingleTermGroups
 } from './lib/searchSyntax';
 import {
+  downloadCountCsv,
   downloadCsv,
   safeFilenamePart,
-  type ConcordanceExportRow
+  type ConcordanceExportRow,
+  type CountExportRow
 } from './lib/csvExport';
 import { downloadTrendChartJpeg } from './lib/chartExport';
 import {
@@ -795,6 +797,7 @@ function App() {
   const [activePanel, setActivePanel] = useState<WorkspacePanelId | null>(null);
   const [modalData, setModalData] = useState<ModalData | null>(null);
   const [lastConcordanceRows, setLastConcordanceRows] = useState<ConcordanceRow[]>([]);
+  const [lastCountRows, setLastCountRows] = useState<CountExportRow[]>([]);
   const [lastRenderContext, setLastRenderContext] = useState<RenderResultContext | null>(null);
   const [trendRows, setTrendRows] = useState<YearCountRow[] | null>(null);
   const [trendQuery, setTrendQuery] = useState<string>('');
@@ -1103,6 +1106,7 @@ function App() {
           setYearRange([MIN_YEAR, MAX_YEAR]);
           setResults(null);
           setLastConcordanceRows([]);
+          setLastCountRows([]);
           setTrendRows(null);
           setTrendQuery('');
           setTrendHoverRow(null);
@@ -1238,6 +1242,7 @@ function App() {
     setStatus("Searching...");
     setResults(null);
     setLastConcordanceRows([]);
+    setLastCountRows([]);
     setLastRenderContext(null);
     setTrendRows(null);
     setTrendQuery('');
@@ -1610,6 +1615,7 @@ function App() {
             `${numberFormatter.format(total)} treff over seriene (${comparisonElapsedMs} ms)`
           );
           setLastConcordanceRows([]);
+          setLastCountRows([]);
           setLastRenderContext(null);
           setTrendRows(null);
           setTrendQuery(trimmedQuery);
@@ -1651,6 +1657,11 @@ function App() {
           `${numberFormatter.format(total)} treff over søkene (${comparisonElapsedMs} ms)`
         );
         setLastConcordanceRows([]);
+        setLastCountRows(counts.map((item) => ({
+          query: item.term,
+          total: item.total,
+          docs: item.docs
+        })));
         setLastRenderContext(null);
         setResults(
           <div className="comparison-count-grid">
@@ -1750,6 +1761,7 @@ function App() {
           `(${responseElapsedMs} ms)`
         );
         setLastConcordanceRows([]);
+        setLastCountRows([]);
         setLastRenderContext(null);
         setTrendRows(rows);
         setTrendQuery(trimmedQuery);
@@ -1790,6 +1802,7 @@ function App() {
 
         setStatus(`Found ${total} matches for "${trimmedQuery}"${categoryText}${authorText}${yearText} (docs: ${docs}, ${responseElapsedMs} ms)`);
         setLastConcordanceRows([]);
+        setLastCountRows([{ query: trimmedQuery, total, docs }]);
         setLastRenderContext(null);
         setResults(
           <div className="concordance">
@@ -2206,6 +2219,7 @@ function App() {
     setYearRange([MIN_YEAR, MAX_YEAR]);
     setResults(null);
     setLastConcordanceRows([]);
+    setLastCountRows([]);
     setTrendRows(null);
     setTrendQuery('');
     setTrendHoverRow(null);
@@ -2329,6 +2343,7 @@ function App() {
       setYearRange([MIN_YEAR, MAX_YEAR]);
       setResults(null);
       setLastConcordanceRows([]);
+      setLastCountRows([]);
       setTrendRows(null);
       setTrendQuery('');
       setTrendHoverRow(null);
@@ -2552,6 +2567,19 @@ function App() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Concordance');
     XLSX.writeFile(workbook, `concordance-${dateStamp}.xlsx`);
+  };
+
+  const handleDownloadCount = () => {
+    if (lastCountRows.length === 0) {
+      setExportStatus('Feil: Ingen telling er klar for nedlasting.');
+      return;
+    }
+    const dateStamp = new Date().toISOString().slice(0, 10);
+    downloadCountCsv(
+      lastCountRows,
+      `telling-${safeFilenamePart(query)}-${dateStamp}.csv`
+    );
+    setExportStatus('Tellingen er lastet ned som CSV.');
   };
 
   const handleDownloadTrendImage = async () => {
@@ -2808,11 +2836,14 @@ function App() {
               ? 'trend'
               : lastConcordanceRows.length > 0
                 ? 'concordance'
-                : 'none'
+                : lastCountRows.length > 0
+                  ? 'count'
+                  : 'none'
           }
           query={query}
           selectedDocuments={activeCorpus.filteredMetadata.length}
           previewRows={lastConcordanceRows.length}
+          countRows={lastCountRows.length}
           estimatedTotal={estimatedExportTotal}
           exportStatus={exportStatus}
           isExporting={isExporting}
@@ -2820,6 +2851,7 @@ function App() {
           onDownloadPreview={handleDownloadConcordance}
           onDownloadFull={() => { void handleFullCsvExport(); }}
           onDownloadTrendImage={() => { void handleDownloadTrendImage(); }}
+          onDownloadCount={handleDownloadCount}
           onCancelExport={handleCancelExport}
         />
       );

@@ -3,6 +3,12 @@
 Vesentlige endringer i ImagiNation korpusutforsker dokumenteres her. Prosjektet
 følger [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Nytt
+
+- CSV-nedlasting av tellingsresultater (søk, treff og dokumenter), også for sammenligninger.
+
 ## [1.1.0] – 2026-08-22
 
 ### Nytt

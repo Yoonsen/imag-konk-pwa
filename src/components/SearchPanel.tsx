@@ -512,7 +512,7 @@ export function SearchSettingsPanel({
             <p><strong>Bøker i utvalget</strong> lager en mindre, raskere Konk-forhåndsvisning av dette subkorpuset.</p>
             <p><strong>Treff fra samme bok</strong> hindrer at én bok dominerer utvalget.</p>
             <p><strong>Treff i forhåndsvisning</strong> begrenser radene på skjermen, ikke den faktiske tellingen.</p>
-            <p>Telling og Trend bruker hele aktive subkorpus. Komplett CSV telles først og har et eget tak på 5 000 rader.</p>
+            <p>Telling og Trend bruker hele aktive subkorpus. Telling kan lastes ned som CSV. Komplett konkordans-CSV telles først og har et eget tak på 5 000 rader.</p>
           </div>
         </DetailsContent>
       </Details>

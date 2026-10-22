@@ -28,16 +28,32 @@ export function escapeCsvCell(value: unknown): string {
   return text;
 }
 
-export function buildConcordanceCsv(rows: ConcordanceExportRow[]): string {
-  const header = CSV_COLUMNS.join(',');
+export interface CountExportRow {
+  query: string;
+  total: number;
+  docs: number;
+}
+
+const COUNT_CSV_COLUMNS: Array<keyof CountExportRow> = ['query', 'total', 'docs'];
+
+function buildCsv<T extends object>(columns: Array<keyof T>, rows: T[]): string {
+  const header = columns.map(String).join(',');
   const body = rows.map((row) =>
-    CSV_COLUMNS.map((column) => escapeCsvCell(row[column])).join(',')
+    columns.map((column) => escapeCsvCell(row[column])).join(',')
   );
   return `\uFEFF${[header, ...body].join('\r\n')}\r\n`;
 }
 
-export function downloadCsv(rows: ConcordanceExportRow[], filename: string): void {
-  const blob = new Blob([buildConcordanceCsv(rows)], {
+export function buildConcordanceCsv(rows: ConcordanceExportRow[]): string {
+  return buildCsv(CSV_COLUMNS, rows);
+}
+
+export function buildCountCsv(rows: CountExportRow[]): string {
+  return buildCsv(COUNT_CSV_COLUMNS, rows);
+}
+
+export function downloadCsvFile(contents: string, filename: string): void {
+  const blob = new Blob([contents], {
     type: 'text/csv;charset=utf-8'
   });
   const url = URL.createObjectURL(blob);
@@ -48,6 +64,14 @@ export function downloadCsv(rows: ConcordanceExportRow[], filename: string): voi
   anchor.click();
   anchor.remove();
   URL.revokeObjectURL(url);
+}
+
+export function downloadCsv(rows: ConcordanceExportRow[], filename: string): void {
+  downloadCsvFile(buildConcordanceCsv(rows), filename);
+}
+
+export function downloadCountCsv(rows: CountExportRow[], filename: string): void {
+  downloadCsvFile(buildCountCsv(rows), filename);
 }
 
 export function safeFilenamePart(value: string): string {

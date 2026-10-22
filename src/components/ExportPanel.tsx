@@ -2,10 +2,11 @@ import { Alert, Button, Paragraph, Spinner, Tag } from '@digdir/designsystemet-r
 import { FULL_EXPORT_LIMIT } from '../lib/searchRequests';
 
 interface ExportPanelProps {
-  contentType: 'trend' | 'concordance' | 'none';
+  contentType: 'trend' | 'concordance' | 'count' | 'none';
   query: string;
   selectedDocuments: number;
   previewRows: number;
+  countRows: number;
   estimatedTotal: number | null;
   exportStatus: string;
   isExporting: boolean;
@@ -13,6 +14,7 @@ interface ExportPanelProps {
   onDownloadPreview: () => void;
   onDownloadFull: () => void;
   onDownloadTrendImage: () => void;
+  onDownloadCount: () => void;
   onCancelExport: () => void;
 }
 
@@ -21,6 +23,7 @@ export function ExportPanel({
   query,
   selectedDocuments,
   previewRows,
+  countRows,
   estimatedTotal,
   exportStatus,
   isExporting,
@@ -28,6 +31,7 @@ export function ExportPanel({
   onDownloadPreview,
   onDownloadFull,
   onDownloadTrendImage,
+  onDownloadCount,
   onCancelExport
 }: ExportPanelProps) {
   const overLimit = estimatedTotal !== null && estimatedTotal > FULL_EXPORT_LIMIT;
@@ -66,11 +70,43 @@ export function ExportPanel({
     );
   }
 
+  if (contentType === 'count') {
+    return (
+      <div className="settings-stack">
+        <Paragraph data-size="sm" className="panel-intro">
+          Last ned tellingen som CSV, med treff og dokumenter for hvert søk.
+        </Paragraph>
+        <div className="export-summary">
+          <div>
+            <span className="field-caption">Søkeuttrykk</span>
+            <strong>{query.trim()}</strong>
+          </div>
+          <div>
+            <span className="field-caption">Aktivt subkorpus</span>
+            <strong>{selectedDocuments.toLocaleString('nb-NO')} dokumenter</strong>
+          </div>
+          <div>
+            <span className="field-caption">Rader</span>
+            <strong>{countRows.toLocaleString('nb-NO')}</strong>
+          </div>
+        </div>
+        <div className="chip-list export-limits" aria-label="Eksportformat">
+          <Tag data-color="neutral">CSV</Tag>
+          <Tag data-color="neutral">Treff og dokumenter</Tag>
+        </div>
+        {statusMessage}
+        <Button type="button" onClick={onDownloadCount} disabled={countRows === 0 || isExporting}>
+          Last ned telling som CSV
+        </Button>
+      </div>
+    );
+  }
+
   if (contentType === 'none') {
     return (
       <div className="settings-stack">
         <Paragraph data-size="sm" className="panel-intro">
-          Vis en trendgraf eller konkordanser for å få relevante eksportvalg.
+          Vis en telling, trendgraf eller konkordanser for å få relevante eksportvalg.
         </Paragraph>
       </div>
     );

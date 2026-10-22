@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildConcordanceCsv, escapeCsvCell, safeFilenamePart } from './csvExport';
+import { buildConcordanceCsv, buildCountCsv, escapeCsvCell, safeFilenamePart } from './csvExport';
 
 describe('CSV export', () => {
   it('escapes quotes, commas and line breaks', () => {
@@ -24,5 +24,15 @@ describe('CSV export', () => {
 
   it('creates a filesystem-safe query name', () => {
     expect(safeFilenamePart('"Norge i krig" / 1890')).toBe('norge-i-krig-1890');
+  });
+
+  it('writes count totals as CSV rows', () => {
+    const csv = buildCountCsv([
+      { query: 'demokrati', total: 120, docs: 40 },
+      { query: 'spise, middag', total: 8, docs: 3 }
+    ]);
+    expect(csv.startsWith('\uFEFFquery,total,docs\r\n')).toBe(true);
+    expect(csv).toContain('demokrati,120,40');
+    expect(csv).toContain('"spise, middag",8,3');
   });
 });
