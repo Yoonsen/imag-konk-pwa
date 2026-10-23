@@ -47,6 +47,14 @@ import {
   type ConcordanceExportRow,
   type CountExportRow
 } from './lib/csvExport';
+import {
+  HITS_FILTER_CHUNK,
+  HITS_ROW_LIMIT,
+  TOTAL_COUNT_LABEL,
+  bookIdsFromHitsPayload,
+  chunkIds,
+  summarizeComparisonCounts
+} from './lib/countSummary';
 import { downloadTrendChartJpeg } from './lib/chartExport';
 import {
   normalizeUrn,
@@ -203,6 +211,61 @@ const numberFormatter = new Intl.NumberFormat('nb-NO');
 const TREND_COLORS = ['#1f6663', '#a34f2a', '#385f9d', '#8a5a91', '#847018', '#3d7a45', '#a33d62', '#59636b'];
 const APP_VERSION = packageMetadata.version;
 const APP_COMMIT = (import.meta.env.VITE_APP_COMMIT || 'local').slice(0, 7);
+
+function buildSingleCountResults(total: number, uniqueDocs: number): React.ReactNode {
+  return (
+    <div className="year-count-results">
+      <div className="year-count-summary">
+        <div className="year-count-card">
+          <strong>Treff</strong>
+          <span>{numberFormatter.format(total)}</span>
+        </div>
+        <div className="year-count-card">
+          <strong>Unike dokumenter</strong>
+          <span>{numberFormatter.format(uniqueDocs)}</span>
+        </div>
+      </div>
+      <div className="year-count-note">
+        Treff er summen av frekvens. Unike dokumenter er bøker med minst ett treff.
+      </div>
+    </div>
+  );
+}
+
+function buildComparisonCountResults(
+  counts: Array<{ term: string; total: number; docs: number }>,
+  totals: { total: number; uniqueDocs: number; uniqueDocsSum: number }
+): React.ReactNode {
+  return (
+    <div className="year-count-results">
+      <div className="year-count-summary">
+        <div className="year-count-card">
+          <strong>Treff</strong>
+          <span>{numberFormatter.format(totals.total)}</span>
+        </div>
+        <div className="year-count-card">
+          <strong>Unike dokumenter</strong>
+          <span>{numberFormatter.format(totals.uniqueDocs)}</span>
+          {totals.uniqueDocsSum > totals.uniqueDocs ? (
+            <small>av {numberFormatter.format(totals.uniqueDocsSum)} hvis hvert søk telles for seg</small>
+          ) : null}
+        </div>
+      </div>
+      <div className="comparison-count-grid">
+        {counts.map((item) => (
+          <div className="year-count-card" key={`count-${item.term}`}>
+            <strong>{item.term}</strong>
+            <span>{numberFormatter.format(item.total)} treff</span>
+            <small>{numberFormatter.format(item.docs)} unike dokumenter</small>
+          </div>
+        ))}
+      </div>
+      <div className="year-count-note">
+        Treff er summen av frekvens over søkene. Unike dokumenter teller hver bok én gang, også når den matcher flere søk.
+      </div>
+    </div>
+  );
+}
 
 function buildYearCountResults(
   yearRows: YearCountRow[],
@@ -1650,30 +1713,94 @@ function App() {
             docs: typeof payload.docs === 'number' ? payload.docs : 0
           };
         }));
-        const total = counts.reduce((sum, item) => sum + item.total, 0);
-        setEstimatedExportTotal(total);
+        setStatus('Finner unike dokumenter på tvers av søkene …');
+        const fetchHitsBookIds = async (
+          expression: (typeof comparisonExpressions)[number],
+          filterChunk: number[] | null,
+          limit: number
+        ): Promise<number[]> => {
+          const totalLimit = Math.min(Math.max(limit, 1), HITS_ROW_LIMIT);
+          const chunkFilter = filterChunk !== null;
+          const hitsUseFilter = chunkFilter || useFilter;
+          const hitsFilterIds = chunkFilter ? filterChunk : (useFilter ? effectiveFilterIds : []);
+          if (expression.termGroups.length >= 2) {
+            const hitsResponse = await runSearchRequest({
+              ...requestBody,
+              mode: 'hits',
+              termGroups: expression.termGroups,
+              matchMode: expression.matchMode,
+              perBook: 1,
+              docSamples: 0,
+              totalLimit,
+              useFilter: hitsUseFilter,
+              filterIds: hitsFilterIds
+            });
+            if (!hitsResponse.ok) {
+              return [];
+            }
+            return bookIdsFromHitsPayload(await hitsResponse.json());
+          }
+          const hitsResponse = await fetch('https://api.nb.no/dhlab/imag/or_query', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              termGroups: expression.termGroups,
+              before: normalizedOrQueryBefore,
+              after: normalizedOrQueryAfter,
+              perBook: 1,
+              docSamples: 0,
+              totalLimit,
+              schema: 'unigrams',
+              useFilter: hitsUseFilter,
+              filterIds: hitsFilterIds,
+              maxVariants: effectiveMaxVariants,
+              renderHits: false
+            })
+          });
+          if (!hitsResponse.ok) {
+            return [];
+          }
+          return bookIdsFromHitsPayload(await hitsResponse.json());
+        };
+        const countsWithIds = await Promise.all(counts.map(async (item, index) => {
+          const expression = comparisonExpressions[index];
+          if (!expression || item.docs <= 0) {
+            return { ...item, bookIds: [] as number[] };
+          }
+          if (item.docs <= HITS_ROW_LIMIT) {
+            return { ...item, bookIds: await fetchHitsBookIds(expression, null, item.docs) };
+          }
+          const corpusIds = filteredMetadata.map((metadata) => Number(metadata.id)).filter(Number.isFinite);
+          const parts = await Promise.all(
+            chunkIds(corpusIds, HITS_FILTER_CHUNK).map((part) => fetchHitsBookIds(expression, part, part.length))
+          );
+          return { ...item, bookIds: [...new Set(parts.flat())] };
+        }));
+        const totals = summarizeComparisonCounts(countsWithIds);
+        const countElapsedMs = Math.round(
+          (typeof performance !== 'undefined' ? performance.now() : Date.now()) - requestStartedAt
+        );
+        setEstimatedExportTotal(totals.total);
         setStatus(
-          `Telte ${comparisonExpressions.length} søk separat: ` +
-          `${numberFormatter.format(total)} treff over søkene (${comparisonElapsedMs} ms)`
+          `Telte ${comparisonExpressions.length} søk: ` +
+          `${numberFormatter.format(totals.total)} treff i ` +
+          `${numberFormatter.format(totals.uniqueDocs)} unike dokumenter (${countElapsedMs} ms)`
         );
         setLastConcordanceRows([]);
-        setLastCountRows(counts.map((item) => ({
-          query: item.term,
-          total: item.total,
-          docs: item.docs
-        })));
+        setLastCountRows([
+          ...countsWithIds.map((item) => ({
+            query: item.term,
+            total: item.total,
+            uniqueDocs: item.docs
+          })),
+          {
+            query: TOTAL_COUNT_LABEL,
+            total: totals.total,
+            uniqueDocs: totals.uniqueDocs
+          }
+        ]);
         setLastRenderContext(null);
-        setResults(
-          <div className="comparison-count-grid">
-            {counts.map((item) => (
-              <div className="year-count-card" key={`count-${item.term}`}>
-                <strong>{item.term}</strong>
-                <span>{numberFormatter.format(item.total)} treff</span>
-                <small>{numberFormatter.format(item.docs)} dokumenter</small>
-              </div>
-            ))}
-          </div>
-        );
+        setResults(buildComparisonCountResults(counts, totals));
         setDebugInfo({
           endpoint: endpointPath,
           queryMode: 'comparison-count',
@@ -1682,9 +1809,16 @@ function App() {
             label: expression.label,
             termGroups: expression.termGroups
           })),
-          counts,
-          total,
-          responseMs: comparisonElapsedMs,
+          counts: countsWithIds.map((item) => ({
+            term: item.term,
+            total: item.total,
+            docs: item.docs,
+            bookIds: item.bookIds.length
+          })),
+          total: totals.total,
+          uniqueDocs: totals.uniqueDocs,
+          uniqueDocsSum: totals.uniqueDocsSum,
+          responseMs: countElapsedMs,
           filteredDocs: filteredMetadata.length,
           useFilter,
           filterIdsCount: useFilter ? effectiveFilterIds.length : 0
@@ -1802,15 +1936,9 @@ function App() {
 
         setStatus(`Found ${total} matches for "${trimmedQuery}"${categoryText}${authorText}${yearText} (docs: ${docs}, ${responseElapsedMs} ms)`);
         setLastConcordanceRows([]);
-        setLastCountRows([{ query: trimmedQuery, total, docs }]);
+        setLastCountRows([{ query: trimmedQuery, total, uniqueDocs: docs }]);
         setLastRenderContext(null);
-        setResults(
-          <div className="concordance">
-            <p><strong>Treff:</strong> {total}</p>
-            <p><strong>Dokumenter:</strong> {docs}</p>
-            <p><strong>Tid:</strong> {responseElapsedMs} ms</p>
-          </div>
-        );
+        setResults(buildSingleCountResults(total, docs));
         setDebugInfo({
           endpoint: endpointPath,
           queryMode: endpointPath,

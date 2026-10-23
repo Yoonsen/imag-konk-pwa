@@ -7,7 +7,8 @@ følger [Semantic Versioning](https://semver.org/).
 
 ### Nytt
 
-- CSV-nedlasting av tellingsresultater (søk, treff og dokumenter), også for sammenligninger.
+- CSV-nedlasting av tellingsresultater (søk, treff og unike dokumenter), også for sammenligninger.
+- Tellingsvisning med egne fliser for treff og unike dokumenter, inkludert totalt over sammenligninger der unike dokumenter er union.
 
 ## [1.1.0] – 2026-08-22
 

@@ -74,7 +74,7 @@ export function ExportPanel({
     return (
       <div className="settings-stack">
         <Paragraph data-size="sm" className="panel-intro">
-          Last ned tellingen som CSV, med treff og dokumenter for hvert søk.
+          Last ned tellingen som CSV, med treff og unike dokumenter. Sammenligninger får også en totalt-rad.
         </Paragraph>
         <div className="export-summary">
           <div>
@@ -92,7 +92,7 @@ export function ExportPanel({
         </div>
         <div className="chip-list export-limits" aria-label="Eksportformat">
           <Tag data-color="neutral">CSV</Tag>
-          <Tag data-color="neutral">Treff og dokumenter</Tag>
+          <Tag data-color="neutral">Treff og unike dokumenter</Tag>
         </div>
         {statusMessage}
         <Button type="button" onClick={onDownloadCount} disabled={countRows === 0 || isExporting}>

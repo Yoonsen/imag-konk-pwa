@@ -28,11 +28,13 @@ describe('CSV export', () => {
 
   it('writes count totals as CSV rows', () => {
     const csv = buildCountCsv([
-      { query: 'demokrati', total: 120, docs: 40 },
-      { query: 'spise, middag', total: 8, docs: 3 }
+      { query: 'demokrati', total: 120, uniqueDocs: 40 },
+      { query: 'spise, middag', total: 8, uniqueDocs: 3 },
+      { query: 'Totalt', total: 128, uniqueDocs: 41 }
     ]);
-    expect(csv.startsWith('\uFEFFquery,total,docs\r\n')).toBe(true);
+    expect(csv.startsWith('\uFEFFquery,total,unique_docs\r\n')).toBe(true);
     expect(csv).toContain('demokrati,120,40');
     expect(csv).toContain('"spise, middag",8,3');
+    expect(csv).toContain('Totalt,128,41');
   });
 });

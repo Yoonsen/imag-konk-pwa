@@ -31,10 +31,8 @@ export function escapeCsvCell(value: unknown): string {
 export interface CountExportRow {
   query: string;
   total: number;
-  docs: number;
+  uniqueDocs: number;
 }
-
-const COUNT_CSV_COLUMNS: Array<keyof CountExportRow> = ['query', 'total', 'docs'];
 
 function buildCsv<T extends object>(columns: Array<keyof T>, rows: T[]): string {
   const header = columns.map(String).join(',');
@@ -49,7 +47,11 @@ export function buildConcordanceCsv(rows: ConcordanceExportRow[]): string {
 }
 
 export function buildCountCsv(rows: CountExportRow[]): string {
-  return buildCsv(COUNT_CSV_COLUMNS, rows);
+  const header = 'query,total,unique_docs';
+  const body = rows.map((row) =>
+    [row.query, row.total, row.uniqueDocs].map(escapeCsvCell).join(',')
+  );
+  return `\uFEFF${[header, ...body].join('\r\n')}\r\n`;
 }
 
 export function downloadCsvFile(contents: string, filename: string): void {
