@@ -69,7 +69,12 @@ describe('search request profiles', () => {
   it('preserves filters in count and export requests', () => {
     const count = buildCountRequest(baseContext);
     const exportRequest = buildFullExportRequest(baseContext);
-    expect(count.body).toMatchObject({ useFilter: true, filterIds: [11, 22] });
+    expect(count.body).toMatchObject({
+      useFilter: true,
+      filterIds: [11, 22],
+      maxVariants: 10,
+      countMode: 'anchor'
+    });
     expect(exportRequest.body).toMatchObject({ useFilter: true, filterIds: [11, 22] });
   });
 

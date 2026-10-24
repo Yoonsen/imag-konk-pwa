@@ -10,6 +10,10 @@ følger [Semantic Versioning](https://semver.org/).
 - CSV-nedlasting av tellingsresultater (søk, treff og unike dokumenter), også for sammenligninger.
 - Tellingsvisning med egne fliser for treff og unike dokumenter, inkludert totalt over sammenligninger der unike dokumenter er union.
 
+### Rettelser
+
+- Telling og trend sender `maxVariants`, så wildcard-utvidelse påvirker både treff og unike dokumenter.
+
 ## [1.1.0] – 2026-08-22
 
 ### Nytt

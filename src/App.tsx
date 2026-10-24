@@ -1544,6 +1544,8 @@ function App() {
             window: normalizedNearWindow,
             before: normalizedBefore,
             after: normalizedAfter,
+            maxVariants: effectiveMaxVariants,
+            countMode: 'anchor',
             ...yearCountRange
           }
         : geoQuery.terms
@@ -1555,6 +1557,7 @@ function App() {
             totalLimit: normalizedOrQueryTotalLimit,
             useFilter,
             filterIds: useFilter ? effectiveFilterIds : [],
+            maxVariants: effectiveMaxVariants,
             renderHits: true
           }
         : endpointPath === "near_query"
@@ -1572,6 +1575,8 @@ function App() {
             window: normalizedNearWindow,
             before: normalizedBefore,
             after: normalizedAfter,
+            maxVariants: effectiveMaxVariants,
+            countMode: 'anchor',
             ...yearCountRange
           }
         : endpointPath === "near_fragments"
@@ -2185,7 +2190,8 @@ function App() {
             excludeSelf: false,
             window: normalizedNearWindow,
             before: normalizedBefore,
-            after: normalizedAfter
+            after: normalizedAfter,
+            maxVariants: effectiveMaxVariants
           }
         : geoQuery.terms
         ? {
@@ -2196,6 +2202,7 @@ function App() {
             totalLimit: normalizedOrQueryTotalLimit,
             useFilter,
             filterIds: useFilter ? effectiveFilterIds : [],
+            maxVariants: effectiveMaxVariants,
             renderHits: true
           }
         : endpointPath === "near_fragments"
